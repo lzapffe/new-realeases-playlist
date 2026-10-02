@@ -37,6 +37,8 @@ PLAYLIST_PUBLIC <- FALSE                # new playlist private by default
 TIMEZONE        <- "Europe/Oslo"
 PAGE_LIMIT      <- 50                   # lowered to 10 automatically if Spotify rejects it
 MAX_ALBUM_PAGES <- 3                    # per artist and release type
+PACE_SECONDS    <- 1                    # pause before every request to Spotify
+MAX_WAIT        <- 120                  # stop if Spotify asks us to wait longer than this (seconds)
 
 API <- "https://api.spotify.com/v1"
 
@@ -69,13 +71,21 @@ TOKEN <- get_access_token()
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 sp_req <- function(path_or_url, method = "GET", body = NULL, query = list()) {
+  Sys.sleep(PACE_SECONDS)
   url <- if (startsWith(path_or_url, "http")) path_or_url else paste0(API, path_or_url)
   req <- request(url) |>
     req_auth_bearer_token(TOKEN) |>
     req_method(method) |>
     req_retry(
-      max_tries   = 5,
-      is_transient = function(r) resp_status(r) %in% c(429, 500, 502, 503),
+      max_tries = 5,
+      is_transient = function(r) {
+        st <- resp_status(r)
+        if (st == 429) {
+          wait <- as.numeric(resp_header(r, "Retry-After") %||% "0")
+          return(wait <= MAX_WAIT)  # long waits are not retried; the script stops instead
+        }
+        st %in% c(500, 502, 503)
+      },
       after = function(r) {
         ra <- resp_header(r, "Retry-After")
         if (is.null(ra)) NA else as.numeric(ra) + 1
@@ -92,21 +102,15 @@ safe_body <- function(resp) {
 }
 
 check_resp <- function(resp) {
+  if (resp_status(resp) == 429) {
+    stop(sprintf("Rate limited by Spotify: asked to wait %s seconds. Stopping. Try again later or slow down PACE_SECONDS.",
+                 resp_header(resp, "Retry-After") %||% "unknown"), call. = FALSE)
+  }
   if (resp_status(resp) >= 400) {
     stop(sprintf("Spotify API error %s for %s\n%s",
                  resp_status(resp), resp$url, safe_body(resp)), call. = FALSE)
   }
   resp
-}
-
-# Try several endpoint paths in order (Spotify renamed some endpoints in 2026,
-# e.g. /playlists/{id}/tracks -> /playlists/{id}/items). Falls through on 404/405.
-sp_call <- function(paths, ...) {
-  for (i in seq_along(paths)) {
-    resp <- sp_req(paths[i], ...)
-    if (!(resp_status(resp) %in% c(404, 405)) || i == length(paths)) break
-  }
-  check_resp(resp)
 }
 
 # Fetch every page of a paged endpoint. Stops early if stop_fn(page_items) is TRUE.
@@ -304,9 +308,10 @@ add_tracks(new_pid, setdiff(new_tracks$uri, already))
 # ---- 5. Remove duplicates against the predefined playlists ------------------
 
 message("Checking for duplicates ...")
-check_names <- setdiff(unique(CHECK_PLAYLISTS), pl_name)
+check_names <- setdiff(unique(CHECK_PLAYLISTS), c(pl_name, SOURCE_PLAYLISTS))
 check_tracks <- map(check_names, function(nm) get_playlist_tracks(find_playlist_id(nm))) |>
-  bind_rows()
+  bind_rows() |>
+  bind_rows(source_tracks)  # source playlists were already read in step 2
 check_keys <- unique(dup_key(check_tracks$title, check_tracks$artists))
 
 final_tracks <- get_playlist_tracks(new_pid) |>
