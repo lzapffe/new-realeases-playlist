@@ -1,22 +1,71 @@
+# =============================================================================
+# GitHub Actions workflow: runs spotify_new_releases.R every day (and when you
+# start it by hand), then saves the script's progress (the state/ folder) back
+# into this repository so the next run can continue from there. The script
+# itself decides what to do each day; the playlist is created on Thursdays
+# and finished on Fridays.
+# =============================================================================
+
+# The name shown in the Actions tab.
 name: Spotify new releases
 
+# "on" decides WHEN the workflow runs.
 on:
+  # schedule: run automatically. cron uses UTC time and the format
+  # "minute hour day-of-month month day-of-week"; "17 8 * * *" = 08:17 UTC daily.
   schedule:
-    # Fridays 08:00 UTC (09:00/10:00 in Oslo). Most music is released on Fridays.
-    - cron: "0 8 * * 5"
-  workflow_dispatch: # lets you run it manually from the Actions tab
+    # Every day at 08:17 UTC (10:17 in Oslo in summer, 09:17 in winter).
+    # Thursday's run creates the playlist ("in progress"), Friday's run adds
+    # Friday's releases and renames it; the other days spread out the work.
+    # Why this time: new releases go live at midnight local time in each
+    # country, and by 08:00 UTC it is past midnight even on the US west coast,
+    # so all of Friday's releases are out. Minute 17 avoids the busy top of
+    # the hour, when GitHub often starts scheduled runs late.
+    - cron: "17 8 * * *"
+  # workflow_dispatch: adds the "Run workflow" button in the Actions tab, so you
+  # can start a run by hand. "inputs" adds options to that button.
+  workflow_dispatch:
+    inputs:
+      # A checkbox. When ticked, the script ignores its saved copies of your
+      # playlists and reads them again from the start (FULL_REFRESH below).
+      full_refresh:
+        description: "Read the big playlists again from scratch"
+        type: boolean
+        default: false
 
+# What the workflow is allowed to do in the repository. "contents: write" is
+# needed for the last step, which commits the updated state/ folder.
+permissions:
+  contents: write # lets the workflow save progress in the state/ folder
+
+# Never run two copies at once (e.g. a manual run while the daily run is still
+# going), since both would write to the same state files. A new run waits for
+# the current one to finish instead of cancelling it.
+concurrency:
+  group: spotify-new-releases
+  cancel-in-progress: false
+
+# A workflow consists of one or more jobs; this one has a single job.
 jobs:
   new-releases:
+    # Run on a fresh Linux machine provided by GitHub.
     runs-on: ubuntu-latest
+    # Stop the job after 330 minutes (5.5 hours), below GitHub's 6-hour limit.
+    # The script itself stops after 300 minutes, leaving time to save progress.
     timeout-minutes: 330
+    # The steps run in order, top to bottom.
     steps:
+      # Copy the repository (script and state/ folder) onto the machine.
       - uses: actions/checkout@v5
 
+      # Install R. use-public-rspm makes package installation faster by using
+      # ready-built packages instead of compiling them.
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
 
+      # Install the R packages the script needs. "any::" means any version is
+      # fine. This action also caches the packages, so later runs are faster.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           packages: |
@@ -27,9 +76,36 @@ jobs:
             any::lubridate
             any::tibble
 
+      # Run the script. "env" passes values to it as environment variables,
+      # which the script reads with Sys.getenv(). The three Spotify values come
+      # from the repository's secrets (Settings -> Secrets and variables ->
+      # Actions), so they never appear in the code or the log. FULL_REFRESH is
+      # the checkbox above; on scheduled runs it isn't set, so it becomes 'false'.
       - name: Build this week's playlist
         env:
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
           SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
+          FULL_REFRESH: ${{ inputs.full_refresh || 'false' }}
         run: Rscript spotify_new_releases.R
+
+      # Save the script's progress back to the repository.
+      # "if: always()" makes this step run even if the script failed or was
+      # stopped early (e.g. blocked by Spotify), so no progress is lost.
+      # The shell commands:
+      #   - only do anything if the state/ folder exists,
+      #   - commit as GitHub's own bot account,
+      #   - "git add state" stages the changed state files,
+      #   - "git diff --cached --quiet ||" means: only commit if something
+      #     actually changed (avoids empty commits on quiet days),
+      #   - "git push" uploads the commit to the repository.
+      - name: Save progress
+        if: always()
+        run: |
+          if [ -d state ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
+            git add state
+            git diff --cached --quiet || git commit -m "Update Spotify state"
+            git push
+          fi
