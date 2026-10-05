@@ -82,6 +82,12 @@ MAX_RUNTIME_MIN      <- 300    # stop and save progress after this many minutes
 MAX_ATTEMPTS         <- 3      # give up on a release not found on Spotify after N tries
 STATE_DIR            <- "state" # folder where progress and playlist copies are saved
 
+# Artists matched before this date are matched once more (except "manual" ones).
+# Matches made before 2026-10-06 used a Deezer search format that returned no
+# confirming songs, so none could be "matched"; this redoes them with the fixed
+# search. Set it to a later date to force another full rematch.
+REMATCH_BEFORE <- as.Date("2026-10-06")
+
 # Read the FULL_REFRESH environment variable (set by the checkbox when you run
 # the workflow manually). TRUE means: ignore the saved playlist copies and read
 # the playlists again from the start.
@@ -124,6 +130,10 @@ norm    <- function(x) tolower(trimws(x))
 clean_q <- function(x) gsub('"', "", x, fixed = TRUE)
 dup_key <- function(title, artists) paste(title, artists, sep = "\u001F")
 as_day  <- function(x) as.Date(x, format = "%Y-%m-%d")
+
+# id_chr(): turn a numeric ID from Deezer into text without scientific
+# notation (as.character(100000) would give "1e+05", which isn't a valid ID).
+id_chr <- function(x) if (is.null(x) || length(x) == 0) NA_character_ else format(x, scientific = FALSE, trim = TRUE)
 
 # The first day of the release window: releases from this date until today
 # count as new (a 14-day window by default).
@@ -215,8 +225,10 @@ STAGED    <- read_state("staged_tracks.csv", STAGED_COLS)
 # Load the seen releases. The previous version of the script stored Deezer IDs
 # in a column called deezer_album_id; those are converted to the new "dz:" form.
 SEEN <- read_state("seen_releases.csv", c("release_id", "deezer_album_id", "found_on"))
-SEEN$release_id <- ifelse(is.na(SEEN$release_id) & !is.na(SEEN$deezer_album_id),
-                          paste0("dz:", SEEN$deezer_album_id), SEEN$release_id)
+# as.character() keeps the column as text even when the file is empty (ifelse()
+# on an empty table returns a logical column, which bind_rows() can't combine).
+SEEN$release_id <- as.character(ifelse(is.na(SEEN$release_id) & !is.na(SEEN$deezer_album_id),
+                                       paste0("dz:", SEEN$deezer_album_id), SEEN$release_id))
 SEEN <- SEEN[SEEN_COLS]
 
 # Load the list of weekly playlists. Rows from the previous version of the
@@ -791,31 +803,32 @@ dz_get <- function(path, query = list()) {
 
 # match_artist(): find the Deezer artist that corresponds to one of your
 # Spotify artists. Done once per artist; the result is saved in artists.csv.
-#   1. Search Deezer for the name and keep only EXACT name matches (ignoring
-#      upper/lower case). None -> "not_found".
-#   2. Confirm the match: search Deezer for one of YOUR songs by this artist.
-#      If the song's artist is one of the candidates -> "matched" (most
-#      reliable, also tells apart artists with the same name).
+#   1. Search Deezer's artists for the name (plain text: Deezer's field syntax,
+#      like artist:"Name", often returns nothing) and keep only EXACT name
+#      matches (ignoring upper/lower case). None -> "not_found".
+#   2. Confirm the match: search Deezer's songs for "<artist> <one of your songs
+#      by this artist>". If a result's artist is one of the candidates ->
+#      "matched" (most reliable, also tells apart artists with the same name).
 #   3. If not confirmed but there is only one artist with that name -> "name".
 #   4. Several same-named artists and no confirmation -> pick the one with
 #      most fans, but mark it "uncertain" (checked on Spotify instead, unless
 #      CHECK_UNCERTAIN is TRUE).
 match_artist <- function(name, sample_title) {
-  res   <- dz_get("/search/artist", list(q = sprintf('artist:"%s"', clean_q(name)), limit = 10))
+  res   <- dz_get("/search/artist", list(q = clean_q(name), limit = 25))
   cands <- keep(res$data %||% list(), function(a) norm(a$name %||% "") == norm(name))
   if (length(cands) == 0) {
     return(list(deezer_id = NA_character_, deezer_name = NA_character_, match = "not_found"))
   }
-  ids <- map_chr(cands, function(a) as.character(a$id))
+  ids <- map_chr(cands, function(a) id_chr(a$id))
 
   # Confirm with one of your own songs by this artist
-  tr  <- dz_get("/search/track", list(q = sprintf('artist:"%s" track:"%s"',
-                                                  clean_q(name), clean_q(sample_title)),
-                                      limit = 10))
-  hit <- detect(tr$data %||% list(), function(t) as.character(t$artist$id %||% "") %in% ids)
-  if (!is.null(hit)) {
-    return(list(deezer_id = as.character(hit$artist$id), deezer_name = hit$artist$name,
-                match = "matched"))
+  if (nzchar(sample_title)) {
+    tr  <- dz_get("/search/track", list(q = paste(clean_q(name), clean_q(sample_title)), limit = 25))
+    hit <- detect(tr$data %||% list(), function(t) id_chr(t$artist$id) %in% ids)
+    if (!is.null(hit)) {
+      return(list(deezer_id = id_chr(hit$artist$id), deezer_name = hit$artist$name,
+                  match = "matched"))
+    }
   }
 
   # Not confirmed: accept a single exact name, otherwise mark as uncertain
@@ -1000,14 +1013,21 @@ tryCatch({
   }
   sample_titles <- setNames(art$sample_title, art$spotify_id)
 
-  # Decide which artists need matching: those never matched, plus those that
-  # were "not_found" or "uncertain" more than 60 days ago (Deezer's catalogue
-  # changes, so they get another try). "manual" rows are never touched.
+  # Decide which artists need matching:
+  #   - those never matched,
+  #   - those that were "not_found" or "uncertain" more than 60 days ago
+  #     (Deezer's catalogue changes, so they get another try), and
+  #   - any non-manual match made before REMATCH_BEFORE (a one-time redo after
+  #     the search fix; it happens once, since the new match gets today's date).
+  # "manual" rows are never touched.
+  matched_on <- as_day(ARTISTS$matched_on)
   to_match <- which(
     ARTISTS$spotify_id %in% art$spotify_id & (
       is.na(ARTISTS$match) |
         (ARTISTS$match %in% c("not_found", "uncertain") &
-           (is.na(as_day(ARTISTS$matched_on)) | as_day(ARTISTS$matched_on) <= TODAY - 60))
+           (is.na(matched_on) | matched_on <= TODAY - 60)) |
+        (ARTISTS$match %in% c("not_found", "uncertain", "name", "matched") &
+           !is.na(matched_on) & matched_on < REMATCH_BEFORE)
     )
   )
   message(length(to_match), " artists to match.")
@@ -1060,18 +1080,18 @@ tryCatch({
         check_time()
         did <- due$deezer_id[k]
         for (a in deezer_new_releases(did)) {
-          rid <- paste0("dz:", a$id)
+          rid <- paste0("dz:", id_chr(a$id))
           if (rid %in% SEEN$release_id) next
-          det <- dz_get(sprintf("/album/%s", a$id))
+          det <- dz_get(sprintf("/album/%s", id_chr(a$id)))
           PENDING <- bind_rows(PENDING, tibble(
-            deezer_album_id = as.character(a$id),
+            deezer_album_id = id_chr(a$id),
             title          = a$title %||% "",
             artist         = det$artist$name %||% "",
             release_date   = a$release_date %||% "",
             upc            = as.character(det$upc %||% NA_character_),
             record_type    = a$record_type %||% "",
             nb_tracks      = as.character(det$nb_tracks %||% NA_character_),
-            first_track_id = as.character(pluck(det, "tracks", "data", 1, "id") %||% NA_character_),
+            first_track_id = id_chr(pluck(det, "tracks", "data", 1, "id")),
             found_on       = as.character(TODAY),
             attempts       = "0"
           ))
