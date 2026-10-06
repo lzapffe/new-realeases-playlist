@@ -179,7 +179,7 @@ read_state <- function(file, cols) {
   }
   df <- read.csv(path, colClasses = "character", na.strings = "",
                  fileEncoding = "UTF-8", check.names = FALSE)
-  for (cl in setdiff(cols, names(df))) df[[cl]] <- NA_character_
+  for (cl in setdiff(cols, names(df))) df[[cl]] <- rep(NA_character_, nrow(df))
   as_tibble(df[cols])
 }
 
