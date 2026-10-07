@@ -11,19 +11,16 @@ name: Spotify new releases
 
 # "on" decides WHEN the workflow runs.
 on:
-  # schedule: run automatically. cron uses UTC time and the format
-  # "minute hour day-of-month month day-of-week"; "17 8 * * *" = 08:17 UTC daily.
-  schedule:
-    # Every day at 08:17 UTC (10:17 in Oslo in summer, 09:17 in winter).
-    # Thursday's run creates the playlist ("in progress"), Friday's run adds
-    # Friday's releases and renames it; the other days spread out the work.
-    # Why this time: new releases go live at midnight local time in each
-    # country, and by 08:00 UTC it is past midnight even on the US west coast,
-    # so all of Friday's releases are out. Minute 17 avoids the busy top of
-    # the hour, when GitHub often starts scheduled runs late.
-    - cron: "17 8 * * *"
-  # workflow_dispatch: adds the "Run workflow" button in the Actions tab, so you
-  # can start a run by hand. "inputs" adds options to that button.
+  # Started every day by the central scheduler (Google Apps Script, see the
+  # Automation inventory) at 10:17 Oslo time, or by hand with the "Run
+  # workflow" button. Thursday's run creates the playlist ("in progress"),
+  # Friday's run adds Friday's releases and renames it; the other days spread
+  # out the work.
+  # Why this time: new releases go live at midnight local time in each
+  # country, and it is midnight on the US west coast at 07:00 UTC in summer
+  # and 08:00 UTC in winter (09:00 Oslo time in both cases). 10:17 Oslo time
+  # leaves a margin, so all of Friday's releases are out.
+  # "inputs" adds options to the "Run workflow" button.
   workflow_dispatch:
     inputs:
       # A checkbox. When ticked, the script ignores its saved copies of your
