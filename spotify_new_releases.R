@@ -314,9 +314,23 @@ get_access_token <- function() {
 # Get the access token, and set up two counters:
 #   SPOTIFY_USED - number of Spotify requests made in this run
 #   BLOCKED      - becomes TRUE if Spotify refuses requests (HTTP 429)
+# TOKEN_TIME remembers when the token was fetched, so sp_req() can get a
+# fresh one before it runs out (a run can last several hours, mostly on
+# Deezer, but each access token only works for 1 hour).
 TOKEN        <- get_access_token()
+TOKEN_TIME   <- Sys.time()
 SPOTIFY_USED <- 0
 BLOCKED      <- FALSE
+
+# refresh_token(): get a new access token and note the time. Called by
+# sp_req() when the token is older than 50 minutes, or when Spotify answers
+# 401 ("expired access token"). This talks to Spotify's login service, not
+# the music API, so it doesn't count towards the request budget.
+refresh_token <- function() {
+  TOKEN      <<- get_access_token()
+  TOKEN_TIME <<- Sys.time()
+  message("Got a new Spotify access token.")
+}
 
 # spotify_reason(): read the "reason" field Spotify includes in its error
 # replies, e.g. "QUOTA_EXCEEDED", so the log shows why requests were refused.
@@ -349,6 +363,8 @@ sp_req <- function(path_or_url, method = "GET", body = NULL, query = list()) {
   }
   SPOTIFY_USED <<- SPOTIFY_USED + 1
   Sys.sleep(SPOTIFY_PACE)
+  # Renew the access token if it is close to its 1-hour limit.
+  if (difftime(Sys.time(), TOKEN_TIME, units = "mins") > 50) refresh_token()
   url <- if (startsWith(path_or_url, "http")) path_or_url else paste0(API, path_or_url)
   req <- request(url) |>
     req_auth_bearer_token(TOKEN) |>
@@ -372,6 +388,12 @@ sp_req <- function(path_or_url, method = "GET", body = NULL, query = list()) {
   if (length(query)) req <- req_url_query(req, !!!query)
   if (!is.null(body)) req <- req_body_json(req, body, auto_unbox = TRUE)
   resp <- req_perform(req)
+  # Safety net: if Spotify still says the token is invalid or expired (401),
+  # get a new token and send the same request once more with it.
+  if (resp_status(resp) == 401) {
+    refresh_token()
+    resp <- req_perform(req_auth_bearer_token(req, TOKEN))
+  }
   if (resp_status(resp) == 429) {
     BLOCKED <<- TRUE
     stop_run(sprintf("Spotify refused more requests (HTTP 429, reason: %s, Retry-After: %s s).",
