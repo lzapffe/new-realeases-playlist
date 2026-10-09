@@ -23,6 +23,18 @@
 # Saturday-Wednesday, with Spotify requests left over:
 #   6. SPOTIFY: check artists that Deezer couldn't match directly on Spotify.
 #
+# Muting artists you never save (checked every day, after step 1):
+#   - When you delete a finished weekly playlist, the script notices it is gone
+#     from your library and judges that week from its own record
+#     (state/week_songs.csv): for each release, was at least one of its songs
+#     saved to a source playlist? Saved = your artists on it get their miss
+#     count reset to 0; not saved = +1 miss each.
+#   - After MUTE_AFTER_MISSES misses in a row, the artist is muted: it is no
+#     longer checked for new releases (steps 3 and 6). Muted artists are
+#     listed in state/muted_artists.csv.
+#   - A muted artist is unmuted when more of their songs appear in your source
+#     playlists than when they were muted (i.e. you saved one from elsewhere).
+#
 # Progress is saved in state/ and committed back to the repository by the
 # workflow, so a run that stops early continues on the next run.
 #
@@ -55,6 +67,10 @@ SOURCE_PLAYLISTS <- c("Everything everything - Part 1", "Everything everything -
 # if a song with exactly the same title and artist(s) exists in any of these.
 # By default the two source playlists; add more names inside c() if you like.
 CHECK_PLAYLISTS <- SOURCE_PLAYLISTS
+
+# Muting: an artist is no longer checked for new releases after this many
+# releases in a row that you didn't save (see "Muting artists" further down).
+MUTE_AFTER_MISSES <- 5
 
 # What counts as a new release.
 INCLUDE_TYPES       <- c("album", "single", "ep") # Deezer types; add "compile" for compilations
@@ -116,6 +132,10 @@ PL_NAME_BUILDING <- paste(PL_NAME, "(in progress)")
 # "a %||% b" returns a, unless a is missing (NULL or empty), then it returns b.
 # Used everywhere to supply a default when an API leaves out a field.
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+
+# "a %|na|% b" returns a single value a, unless it is NA, then b. Used by the
+# muting step for counts that may be empty in the state files.
+`%|na|%` <- function(a, b) if (length(a) == 0 || is.na(a[1])) b else unname(a[1])
 
 # norm(): lowercase and trim spaces, so names can be compared loosely when
 #   matching artists and albums between Deezer and Spotify.
@@ -196,31 +216,44 @@ write_state <- function(df, file) {
 #                    ("snapshot"), how many items are read so far, and the last
 #                    song read (used to check that the list hasn't changed)
 #   ARTIST_COLS    - one row per artist: the Deezer match, how it was matched,
-#                    when it was last checked on Deezer, and (for artists
-#                    Deezer couldn't match) when it was last checked on Spotify
+#                    when it was last checked on Deezer, (for artists Deezer
+#                    couldn't match) when it was last checked on Spotify, and
+#                    for muting: misses in a row, when last judged, when muted
+#                    (empty = not muted) and how many of their songs were in
+#                    your source playlists at that moment
 #   PEND_COLS      - releases found on Deezer, not yet looked up on Spotify
 #   SEEN_COLS      - releases already handled, so none is added twice
 #                    (IDs start with "dz:" for Deezer or "sp:" for Spotify)
 #   STAGED_COLS    - songs waiting to be added to the next weekly playlist
+#                    (with the artists' IDs, so muting can find them later)
+#   WEEK_SONG_COLS - the script's record of every song added to a weekly
+#                    playlist, kept until that week has been judged for muting
 #   PUBLISHED_COLS - one row per weekly playlist: its Spotify ID, its status
 #                    ("building" from Thursday, "done" when finished and
-#                    renamed), when it was created and finished, and how many
-#                    songs were added
+#                    renamed), when it was created and finished, how many
+#                    songs were added, and when the week was judged for muting
+#                    (after you deleted the playlist)
 TRACK_COLS     <- c("uri", "title", "artists", "artist_ids", "artist_names")
 META_COLS      <- c("playlist_id", "name", "snapshot", "n_items", "last_uri")
 ARTIST_COLS    <- c("spotify_id", "name", "deezer_id", "deezer_name", "match",
-                    "matched_on", "last_checked", "sp_last_checked")
+                    "matched_on", "last_checked", "sp_last_checked",
+                    "misses", "last_judged", "muted_on", "songs_at_mute")
 PEND_COLS      <- c("deezer_album_id", "title", "artist", "release_date", "upc",
                     "record_type", "nb_tracks", "first_track_id", "found_on", "attempts")
 SEEN_COLS      <- c("release_id", "found_on")
-STAGED_COLS    <- c("uri", "title", "artists", "release_id", "release_date", "staged_on")
-PUBLISHED_COLS <- c("week", "playlist_id", "status", "created_on", "finished_on", "n_songs")
+STAGED_COLS    <- c("uri", "title", "artists", "artist_ids", "release_id",
+                    "release_date", "staged_on")
+WEEK_SONG_COLS <- c("week", "playlist_id", "uri", "title", "artists", "artist_ids",
+                    "release_id", "release_date")
+PUBLISHED_COLS <- c("week", "playlist_id", "status", "created_on", "finished_on",
+                    "n_songs", "judged_on")
 
 # Load the saved state from the previous run (empty tables on the first run).
 META      <- read_state("playlists_meta.csv", META_COLS)
 ARTISTS   <- read_state("artists.csv", ARTIST_COLS)
 PENDING   <- read_state("pending_releases.csv", PEND_COLS)
 STAGED    <- read_state("staged_tracks.csv", STAGED_COLS)
+WEEK_SONGS <- read_state("week_songs.csv", WEEK_SONG_COLS)
 
 # Load the seen releases. The previous version of the script stored Deezer IDs
 # in a column called deezer_album_id; those are converted to the new "dz:" form.
@@ -247,13 +280,19 @@ PUBLISHED <- PUBLISHED[PUBLISHED_COLS]
 #     file is sorted, not the table in memory, so loops over row numbers in
 #     the script aren't disturbed.
 #   - seen releases older than 180 days are dropped, so the file stays small.
+#   - muted_artists.csv is a read-only overview of the muted artists, newest
+#     first. To unmute someone by hand, clear their muted_on (and misses) in
+#     artists.csv instead - this file is rewritten on every save.
 save_state <- function() {
   rank <- match(ifelse(is.na(ARTISTS$match), "(none)", ARTISTS$match),
                 c("not_found", "(none)", "uncertain", "name", "matched", "manual"))
   write_state(ARTISTS[order(rank, tolower(ARTISTS$name)), ], "artists.csv")
   write_state(PENDING, "pending_releases.csv")
   write_state(STAGED, "staged_tracks.csv")
+  write_state(WEEK_SONGS, "week_songs.csv")
   write_state(PUBLISHED, "published.csv")
+  muted <- ARTISTS[!is.na(ARTISTS$muted_on), c("spotify_id", "name", "muted_on", "misses")]
+  write_state(muted[order(muted$muted_on, decreasing = TRUE), ], "muted_artists.csv")
   SEEN <<- SEEN |> filter(is.na(as_day(found_on)) | as_day(found_on) > TODAY - 180)
   write_state(SEEN, "seen_releases.csv")
 }
@@ -275,12 +314,13 @@ empty_tracks <- function() {
 }
 
 # stage_tracks(): add a release's songs to the staging list for the next
-# weekly playlist, skipping songs that are already staged.
+# weekly playlist, skipping songs that are already staged. The artists' IDs
+# are kept, so the muting step knows whose release each song was.
 stage_tracks <- function(tr, release_id, release_date) {
   if (is.null(tr) || nrow(tr) == 0) return(invisible())
   new <- tr |>
     filter(!uri %in% STAGED$uri) |>
-    transmute(uri, title, artists, release_id = release_id,
+    transmute(uri, title, artists, artist_ids, release_id = release_id,
               release_date = release_date, staged_on = as.character(TODAY))
   STAGED <<- bind_rows(STAGED, new)
 }
@@ -734,7 +774,9 @@ create_playlist <- function(name, description) {
 #   3. if read_existing is TRUE: songs already in the playlist (e.g. added on
 #      Thursday, or by a run that stopped halfway).
 # Songs are added 100 at a time, the most Spotify accepts per request; I()
-# makes sure even a single song is sent as a list. Returns the number added.
+# makes sure even a single song is sent as a list. After each successful
+# request, those songs are recorded in week_songs.csv (used for muting once
+# you delete the playlist). Returns the number added.
 add_staged <- function(pid, read_existing) {
   check_tr   <- bind_rows(PL_DATA[CHECK_PLAYLISTS])
   check_keys <- unique(dup_key(check_tr$title, check_tr$artists))
@@ -755,9 +797,14 @@ add_staged <- function(pid, read_existing) {
              !key %in% dup_key(existing$title, existing$artists))
   }
   if (nrow(pub) > 0) {
-    chunks <- split(pub$uri, ceiling(seq_along(pub$uri) / 100))
-    walk(chunks, function(ch) {
-      sp_call(playlist_paths(pid), method = "POST", body = list(uris = I(unname(ch))))
+    chunks <- split(seq_len(nrow(pub)), ceiling(seq_len(nrow(pub)) / 100))
+    walk(chunks, function(rows) {
+      ch <- pub[rows, ]
+      sp_call(playlist_paths(pid), method = "POST", body = list(uris = I(unname(ch$uri))))
+      WEEK_SONGS <<- bind_rows(WEEK_SONGS, ch |>
+        transmute(week = PL_NAME, playlist_id = as.character(pid), uri, title,
+                  artists, artist_ids, release_id, release_date))
+      write_state(WEEK_SONGS, "week_songs.csv")
     })
   }
   message("Added ", nrow(pub), " song(s).")
@@ -880,6 +927,125 @@ deezer_new_releases <- function(did) {
     d <- as_day(a$release_date %||% NA_character_)
     !is.na(d) && d >= SINCE && d <= TODAY && (a$record_type %||% "") %in% INCLUDE_TYPES
   })
+}
+
+# ---- Muting artists ---------------------------------------------------------
+
+# song_artist_ids(): the Spotify artist IDs of each song, as a list (one entry
+# per song). Songs staged before the muting update have no artist_ids; for
+# those, the "Artist A, Artist B" text is split and the names are looked up
+# among your artists (my_names -> my_ids), which works unless a name itself
+# contains ", ".
+song_artist_ids <- function(artist_ids, artists, my_ids, my_names) {
+  map2(artist_ids, artists, function(ids, nms) {
+    if (!is.na(ids) && nzchar(ids)) return(strsplit(ids, "|", fixed = TRUE)[[1]])
+    if (is.na(nms)) return(character())
+    found <- my_ids[match(strsplit(nms, ", ", fixed = TRUE)[[1]], my_names)]
+    found[!is.na(found)]
+  })
+}
+
+# source_song_counts(): how many songs each artist has in your source
+# playlists, as a named vector (name = Spotify artist ID). Used to notice when
+# you save a muted artist's song from somewhere else.
+source_song_counts <- function(src) {
+  ids <- unlist(strsplit(src$artist_ids[!is.na(src$artist_ids)], "|", fixed = TRUE))
+  c(table(ids[nzchar(ids)]))
+}
+
+# judge_deleted_weeks(): judge every finished weekly playlist that is no
+# longer in your library (deleted = unfollowed in Spotify) and hasn't been
+# judged yet. Weeks are judged oldest first, and within a week releases are
+# taken in release-date order, so "in a row" follows time. For each release:
+#   1. saved = at least one of its songs is in your source playlists (same
+#      Spotify song, or exactly the same title and artists - e.g. you saved
+#      the album version of a single),
+#   2. "your artists" on it = its artists that appear in your source playlists
+#      (so on a collaboration, each of them is judged),
+#   3. saved: their misses are reset to 0; not saved: +1 each. When an artist
+#      reaches MUTE_AFTER_MISSES, they are muted, and the number of their songs
+#      in your source playlists is noted for the unmute check.
+# Artists that are already muted are left as they are. Afterwards the week's
+# record is removed from week_songs.csv and the judging date is noted in
+# published.csv. Weeks from before this feature have no record and are only
+# marked as judged.
+judge_deleted_weeks <- function(src, art) {
+  gone <- PUBLISHED |>
+    filter(status == "done", is.na(judged_on),
+           is.na(playlist_id) | !playlist_id %in% MY_PL$id) |>
+    arrange(created_on)
+  if (nrow(gone) == 0) return(invisible())
+
+  # Your saved songs (by Spotify ID and by exact title + artists), and how many
+  # songs each artist has, both taken from the source playlists.
+  saved_uris <- src$uri
+  saved_keys <- dup_key(src$title, src$artists)
+  counts     <- source_song_counts(src)
+
+  for (w in seq_len(nrow(gone))) {
+    wk    <- gone$week[w]
+    songs <- WEEK_SONGS |> filter(week == wk)
+
+    # One row per release: was any of its songs saved, and which of your
+    # artists are on it.
+    songs$ids   <- song_artist_ids(songs$artist_ids, songs$artists, art$spotify_id, art$name)
+    songs$saved <- songs$uri %in% saved_uris | dup_key(songs$title, songs$artists) %in% saved_keys
+    rel <- songs |>
+      group_by(release_id) |>
+      summarise(release_date = first(release_date),
+                saved        = any(saved),
+                ids          = list(intersect(unique(unlist(ids)), art$spotify_id)),
+                .groups = "drop") |>
+      arrange(release_date)
+
+    # Update the miss counts, release by release.
+    n_muted <- 0
+    for (r in seq_len(nrow(rel))) {
+      for (sid in rel$ids[[r]]) {
+        i <- which(ARTISTS$spotify_id == sid)[1]
+        if (is.na(i) || !is.na(ARTISTS$muted_on[i])) next
+        misses <- if (rel$saved[r]) 0L else (suppressWarnings(as.integer(ARTISTS$misses[i])) %|na|% 0L) + 1L
+        ARTISTS$misses[i]      <<- as.character(misses)
+        ARTISTS$last_judged[i] <<- as.character(TODAY)
+        if (misses >= MUTE_AFTER_MISSES) {
+          ARTISTS$muted_on[i]      <<- as.character(TODAY)
+          ARTISTS$songs_at_mute[i] <<- as.character(counts[sid] %|na|% 0L)
+          n_muted <- n_muted + 1
+          message("  muted: ", ARTISTS$name[i], " (", misses, " releases in a row not saved)")
+        }
+      }
+    }
+
+    # Log the result, forget the week's record and mark the week as judged.
+    message(sprintf("Judged '%s': %d release(s), %d saved, %d not saved; %d artist(s) muted.",
+                    wk, nrow(rel), sum(rel$saved), sum(!rel$saved), n_muted))
+    WEEK_SONGS <<- WEEK_SONGS |> filter(week != wk)
+    PUBLISHED$judged_on[PUBLISHED$week == wk] <<- as.character(TODAY)
+  }
+}
+
+# unmute_returning(): unmute artists you have saved again. If a muted artist
+# now has MORE songs in your source playlists than when they were muted, you
+# added one from another source, so they are unmuted and start again at 0
+# misses. If they have fewer (you removed songs), the noted number is lowered,
+# so that the next song you add still counts. An artist you muted by hand
+# (muted_on filled in, songs_at_mute empty) gets today's number noted.
+unmute_returning <- function(src) {
+  counts <- source_song_counts(src)
+  for (i in which(!is.na(ARTISTS$muted_on))) {
+    now    <- counts[ARTISTS$spotify_id[i]] %|na|% 0L
+    before <- suppressWarnings(as.integer(ARTISTS$songs_at_mute[i]))
+    if (is.na(before)) {
+      ARTISTS$songs_at_mute[i] <<- as.character(now)
+    } else if (now > before) {
+      ARTISTS$muted_on[i]      <<- NA_character_
+      ARTISTS$songs_at_mute[i] <<- NA_character_
+      ARTISTS$misses[i]        <<- "0"
+      message("  unmuted: ", ARTISTS$name[i], " (you saved one of their songs)")
+    } else if (now < before) {
+      ARTISTS$songs_at_mute[i] <<- as.character(now)
+    }
+  }
 }
 
 # ---- Running the phases -----------------------------------------------------
@@ -1035,6 +1201,27 @@ tryCatch({
   }
   sample_titles <- setNames(art$sample_title, art$spotify_id)
 
+  # == Muting: judge deleted weekly playlists, unmute returning artists =======
+  # Only done when your source playlists were read completely AND are up to
+  # date in this run (their saved version code equals Spotify's), so a song
+  # you saved just before deleting a weekly playlist is never missed. If not,
+  # it simply waits for a later run.
+  src_ids <- pl_ids[SOURCE_PLAYLISTS]
+  src_fresh <- !is.null(MY_PL) && all(complete[SOURCE_PLAYLISTS]) &&
+    all(map_lgl(src_ids, function(id) {
+      identical(META$snapshot[META$playlist_id %in% id][1], MY_PL$snapshot[MY_PL$id %in% id][1])
+    }))
+  if (src_fresh) {
+    message("== Muting: checking for deleted weekly playlists")
+    judge_deleted_weeks(src, art)
+    unmute_returning(src)
+    save_state()
+  } else {
+    message("Muting check postponed: your source playlists are not up to date in this run.")
+  }
+  muted <- ARTISTS$spotify_id[!is.na(ARTISTS$muted_on)]
+  message(length(muted), " artist(s) muted.")
+
   # Decide which artists need matching:
   #   - those never matched,
   #   - those that were "not_found" or "uncertain" more than 60 days ago
@@ -1082,11 +1269,12 @@ tryCatch({
 
     # Find the artists to check: in your source playlists, matched to Deezer
     # with an accepted match type, and not already checked today (in case the
-    # workflow runs twice in a day). Several Spotify artists can share one
-    # Deezer artist, so each Deezer ID is checked once.
+    # workflow runs twice in a day). Muted artists are skipped. Several Spotify
+    # artists can share one Deezer artist, so each Deezer ID is checked once.
     ok_types <- c("matched", "name", "manual", if (CHECK_UNCERTAIN) "uncertain")
     due <- ARTISTS |>
-      filter(spotify_id %in% art$spotify_id, !is.na(deezer_id), match %in% ok_types) |>
+      filter(spotify_id %in% art$spotify_id, !spotify_id %in% muted,
+             !is.na(deezer_id), match %in% ok_types) |>
       group_by(deezer_id) |>
       summarise(done_today = any(last_checked %in% as.character(TODAY)), .groups = "drop") |>
       filter(!done_today)
@@ -1247,13 +1435,14 @@ tryCatch({
   # == 6. Spotify: check artists Deezer couldn't match (Sat-Wed) ==============
   # With requests left over, artists that Deezer couldn't match ("not_found",
   # and "uncertain" unless CHECK_UNCERTAIN) are checked directly on Spotify,
-  # those checked longest ago first, each at most once a week. Not on Thursdays
-  # and Fridays, to keep Spotify's quota free for Friday's playlist.
+  # those checked longest ago first, each at most once a week. Muted artists
+  # are skipped. Not on Thursdays and Fridays, to keep Spotify's quota free for
+  # Friday's playlist.
   if (WEEKDAY %in% FALLBACK_DAYS && spotify_ok() && !PLAYLIST_DUE) {
     message("== 6. Checking unmatched artists on Spotify (with leftover requests)")
     fb_types <- c("not_found", if (!CHECK_UNCERTAIN) "uncertain")
     fb <- ARTISTS |>
-      filter(spotify_id %in% art$spotify_id, match %in% fb_types) |>
+      filter(spotify_id %in% art$spotify_id, !spotify_id %in% muted, match %in% fb_types) |>
       mutate(sl = as_day(sp_last_checked)) |>
       filter(is.na(sl) | sl <= TODAY - FALLBACK_INTERVAL_DAYS) |>
       arrange(!is.na(sl), sl)
