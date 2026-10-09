@@ -1048,6 +1048,43 @@ unmute_returning <- function(src) {
   }
 }
 
+# ---- ONE-TIME: catch-up for week 41 (remove after 23 October 2026) ----------
+# backfill_week_records(): week 41 was made before muting existed, so the
+# script has no record of its songs. This reads the songs of any finished,
+# not yet judged weekly playlist that is still in your library but has no
+# record, and saves them in week_songs.csv as if they had been recorded when
+# added. Each song's album counts as its release ("sp:" + Spotify album ID).
+# Costs about one Spotify request per 100 songs, once per week caught up.
+# Once week 41 is recorded (or judged), this does nothing, so it can be
+# deleted together with its call in phase 1 (search for "ONE-TIME").
+backfill_week_records <- function() {
+  todo <- PUBLISHED |>
+    filter(status == "done", is.na(judged_on), !is.na(playlist_id),
+           playlist_id %in% MY_PL$id, !week %in% WEEK_SONGS$week)
+  for (w in seq_len(nrow(todo))) {
+    pid    <- todo$playlist_id[w]
+    tracks <- map(sp_get_all(playlist_paths(pid)), item_track)
+
+    # Keep the same songs tracks_to_tibble() keeps, so the album details line
+    # up with its rows.
+    tracks <- keep(tracks, function(t) {
+      !is.null(t) && !is.null(t$uri) && identical(t$type %||% "track", "track") &&
+        !isTRUE(t$is_local)
+    })
+    if (length(tracks) == 0) next
+    rec <- tracks_to_tibble(tracks) |>
+      mutate(week         = todo$week[w],
+             playlist_id  = pid,
+             release_id   = paste0("sp:", map_chr(tracks, function(t) t$album$id %||% t$uri)),
+             release_date = map_chr(tracks, function(t) t$album$release_date %||% NA_character_))
+    WEEK_SONGS <<- bind_rows(WEEK_SONGS, rec[WEEK_SONG_COLS])
+    write_state(WEEK_SONGS, "week_songs.csv")
+    message("Recorded ", nrow(rec), " song(s) from '", todo$week[w],
+            "' for muting (one-time catch-up).")
+  }
+}
+# ---- END ONE-TIME ------------------------------------------------------------
+
 # ---- Running the phases -----------------------------------------------------
 
 # Flags that record why a run stopped early:
@@ -1141,6 +1178,10 @@ tryCatch({
   # Get your list of playlists (with version codes and song counts).
   message("== 1. Updating local copies of your playlists")
   run_phase(MY_PL <- fetch_my_playlists())
+
+  # ONE-TIME (remove after 23 October 2026): record week 41's songs for muting.
+  # Skipped on days the weekly playlist is built or finished, to save requests.
+  if (spotify_ok() && !PLAYLIST_DUE) run_phase(backfill_week_records())
 
   # Look up the IDs of all playlists the script needs, and update each saved
   # copy (skipped if Spotify is unreachable or the budget is used up). On
