@@ -1,0 +1,76 @@
+# =============================================================================
+# GitHub Actions workflow: runs christmas/christmas_genres.R when you start it
+# by hand, then saves its progress (the christmas/state/ folder) back into the
+# repository so the next run continues from there.
+# Goes in .github/workflows/christmas-genres.yml in the new-releases repository.
+# =============================================================================
+
+# The name shown in the Actions tab.
+name: Christmas genre playlists
+
+# Only started by hand, with the "Run workflow" button. No schedule, so it
+# never uses the Spotify quota unless you choose to.
+on:
+  workflow_dispatch:
+
+# "contents: write" lets the last step commit the christmas/state/ folder.
+permissions:
+  contents: write
+
+# Shares its queue with the daily new-releases workflow: if one is running,
+# the other waits for it to finish. So the two never use Spotify at the same
+# time, and their commits never clash.
+concurrency:
+  group: spotify-new-releases
+  cancel-in-progress: false
+
+jobs:
+  christmas:
+    # A fresh Linux machine from GitHub. The script takes a few minutes, so
+    # 60 minutes is a generous limit.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # Copy the repository onto the machine (the script, its christmas/state/
+      # folder, and the new-releases script's saved playlist copies in state/).
+      - uses: actions/checkout@v5
+
+      # Install R, using ready-built packages to save time.
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      # Install the R packages the script needs (cached for later runs).
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::httr2
+            any::dplyr
+            any::purrr
+            any::tibble
+
+      # Run the script. The secrets come from Settings -> Secrets and
+      # variables -> Actions: the three Spotify ones you already have, plus
+      # LASTFM_API_KEY.
+      - name: Find songs and make playlists
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+          SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+        run: Rscript christmas/christmas_genres.R
+
+      # Save progress, even if the script stopped early ("if: always()").
+      # Only commits when something changed. "git pull --rebase" first picks
+      # up any commit the daily workflow made in the meantime.
+      - name: Save progress
+        if: always()
+        run: |
+          if [ -d christmas/state ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
+            git add christmas/state
+            git diff --cached --quiet || git commit -m "Update Christmas playlist state"
+            git pull --rebase
+            git push
+          fi
