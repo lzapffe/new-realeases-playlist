@@ -22,11 +22,12 @@
 #      songs (2 requests per playlist).
 # Progress is saved in christmas/state/ and committed by the workflow, so the
 # next run continues where this one stopped. Run it until the log says all
-# playlists are made (about five runs of 80 requests).
+# playlists are made (about eight runs of 50 requests).
 #
 # Started by hand from the Actions tab ("Christmas genre playlists"). It
-# refuses to run on Thursdays and Fridays, when the weekly new-releases
-# playlist needs the shared Spotify quota.
+# only runs Saturday to Tuesday: Thursday and Friday need the shared Spotify
+# quota for the weekly new-releases playlist, and skipping Wednesday means
+# that even if Spotify ever blocks requests for a day, it has cleared by then.
 #
 # Needs: SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REFRESH_TOKEN (the
 # same secrets as the new-releases script) and LASTFM_API_KEY.
@@ -77,9 +78,10 @@ MORE_SONGS <- c()
 MIN_SONGS            <- 10     # a genre with fewer than this is not made
 CHRISTMAS_POOL_PAGES <- 10     # pages of 100 "christmas" songs used as filler
 MIN_ARTIST_TAG       <- 20     # how strongly (0-100) an artist must be tagged
-MAX_SPOTIFY_REQUESTS <- 80     # per run; keep well below the daily quota
+MAX_SPOTIFY_REQUESTS <- 50     # per run; keeps the day's total below the quota
 PLAYLIST_PUBLIC      <- FALSE  # the Christmas playlists are private
-BLOCKED_DAYS         <- c(4, 5) # Thursday, Friday (1 = Monday): don't run
+BLOCKED_DAYS         <- c(3, 4, 5) # Wed, Thu, Fri (1 = Monday): don't run, so a
+                                    # rare Spotify block clears before Thursday
 STATE_DIR            <- "christmas/state"
 
 # Base addresses of the two APIs.
@@ -93,8 +95,9 @@ SP     <- "https://api.spotify.com/v1"
 WEEKDAY <- as.POSIXlt(Sys.time(), tz = "Europe/Oslo")$wday   # 0 = Sunday
 WEEKDAY <- if (WEEKDAY == 0) 7 else WEEKDAY
 if (WEEKDAY %in% BLOCKED_DAYS) {
-  message("Today is Thursday or Friday, when the new-releases playlist needs ",
-          "the Spotify quota. Nothing was done; please run this on another day.")
+  message("This doesn't run on Wednesdays, Thursdays or Fridays, to keep the ",
+          "Spotify quota safe for the weekly new-releases playlist. Nothing was ",
+          "done; please run it on a Monday or Tuesday.")
   quit(save = "no", status = 0)
 }
 

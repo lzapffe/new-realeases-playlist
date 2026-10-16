@@ -1,0 +1,87 @@
+# =============================================================================
+# GitHub Actions workflow: runs the mood checker when you start it by hand,
+# then saves the results (moods/results/) in the repository.
+# Goes in .github/workflows/mood-check.yml in the new-releases repository.
+# =============================================================================
+
+# The name shown in the Actions tab.
+name: Mood checker
+
+# Only started by hand, with the "Run workflow" button.
+on:
+  workflow_dispatch:
+
+# "contents: write" lets the last step commit the results.
+permissions:
+  contents: write
+
+# Shares its queue with the daily new-releases workflow, so the two never
+# use Spotify at the same time and their commits never clash.
+concurrency:
+  group: spotify-new-releases
+  cancel-in-progress: false
+
+jobs:
+  moods:
+    # A fresh Linux machine from GitHub: Essentia installs easily on Linux,
+    # so nothing needs installing on your own computer. 30 minutes is plenty.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Copy the repository (the scripts and the saved playlist copies).
+      - uses: actions/checkout@v5
+
+      # Install R and the R packages (cached for later runs).
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::httr2
+            any::dplyr
+            any::purrr
+            any::tibble
+
+      # Install Python and Essentia (with its TensorFlow models support).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Essentia
+        run: pip install essentia-tensorflow numpy
+
+      # Part 1 (R): read the test playlist (2-3 Spotify requests), pick the
+      # random songs, and find the Deezer previews.
+      - name: Prepare songs
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+          SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
+        run: Rscript moods/mood_check.R prepare
+
+      # Part 2 (Python): Essentia analyses the previews. "continue-on-error"
+      # means the comparison still runs (without Essentia) if this step fails.
+      - name: Essentia analysis
+        continue-on-error: true
+        run: python moods/essentia_moods.py
+
+      # Part 3 (R): ReccoBeats and Last.fm, then the comparison tables.
+      - name: Compare systems
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+        run: Rscript moods/mood_check.R compare
+
+      # Save the results in the repository (only moods/results, not the
+      # downloaded models). "git pull --rebase" picks up any commit the daily
+      # workflow made in the meantime.
+      - name: Save results
+        if: always()
+        run: |
+          if [ -d moods/results ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
+            git add moods/results
+            git diff --cached --quiet || git commit -m "Mood checker results"
+            git pull --rebase
+            git push
+          fi

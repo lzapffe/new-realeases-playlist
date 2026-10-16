@@ -1,0 +1,52 @@
+# =============================================================================
+# GitHub Actions workflow: runs the duplicate finder when you start it by hand
+# and saves the two lists (duplicates/) in the repository.
+# Goes in .github/workflows/find-duplicates.yml in the new-releases repository.
+# Uses only the saved playlist copies, so no Spotify requests and no secrets.
+# =============================================================================
+
+name: Duplicate finder
+
+# Only started by hand, with the "Run workflow" button.
+on:
+  workflow_dispatch:
+
+# "contents: write" lets the last step commit the lists.
+permissions:
+  contents: write
+
+# Shares its queue with the daily new-releases workflow, so their commits
+# never clash.
+concurrency:
+  group: spotify-new-releases
+  cancel-in-progress: false
+
+jobs:
+  duplicates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Copy the repository (the script and the saved playlist copies).
+      - uses: actions/checkout@v5
+
+      # Install R and dplyr (cached for later runs).
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: any::dplyr
+
+      - name: Find duplicates
+        run: Rscript duplicates/find_duplicates.R
+
+      # Save the lists. "git pull --rebase" picks up any commit the daily
+      # workflow made in the meantime.
+      - name: Save lists
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
+          git add duplicates/*.csv
+          git diff --cached --quiet || git commit -m "Duplicate finder lists"
+          git pull --rebase
+          git push
