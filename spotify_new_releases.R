@@ -791,7 +791,10 @@ add_staged <- function(pid, read_existing) {
   }
   pub <- pub |> filter(!key %in% check_keys)
   if (read_existing && nrow(pub) > 0) {
-    existing <- tracks_to_tibble(map(sp_get_all(playlist_paths(pid)), item_track))
+    # The songs already in the playlist come from the script's own record
+    # (week_songs.csv), not from reading the playlist on Spotify. Reading costs
+    # one request per 50 songs, which is too many for a big week.
+    existing <- WEEK_SONGS[WEEK_SONGS$playlist_id == as.character(pid), ]
     pub <- pub |>
       filter(!uri %in% existing$uri,
              !key %in% dup_key(existing$title, existing$artists))
