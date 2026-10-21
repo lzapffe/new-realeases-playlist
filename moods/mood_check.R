@@ -162,7 +162,8 @@ if (STEP == "prepare") {
     if (!is.na(songs$isrc[i])) hit <- get_json(paste0("https://api.deezer.com/track/isrc:", songs$isrc[i]))
     if (is.null(hit$preview) || !nzchar(hit$preview %||% "")) {
       q <- sprintf('artist:"%s" track:"%s"', gsub('"', "", songs$artist[i]), gsub('"', "", songs$title[i]))
-      hit <- get_json("https://api.deezer.com/search", list(q = q, limit = 1))$data[[1]]
+      found <- get_json("https://api.deezer.com/search", list(q = q, limit = 1))$data
+      hit <- if (length(found) > 0) found[[1]] else NULL  # no match: no preview
     }
     hit$preview %||% NA_character_
   })
