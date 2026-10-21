@@ -2,7 +2,7 @@
 # mood_check.R
 #
 # Goal: find out which mood system best recognises the mood of your
-# "semi background songs" playlist, by comparing three systems on the same
+# "Semi-background songs" playlist, by comparing three systems on the same
 # songs:
 #   - Essentia (computer analysis of each song's 30-second Deezer preview):
 #     7 yes/no moods and 56 mood/theme tags. Runs in essentia_moods.py.
@@ -15,7 +15,7 @@
 #
 # It runs in two parts, started by the workflow:
 #   Rscript moods/mood_check.R prepare
-#     1. SPOTIFY (2-3 requests): read "semi background songs".
+#     1. SPOTIFY (2-3 requests): read "Semi-background songs".
 #     2. Pick 20 random songs from the saved Everything everything copies in
 #        state/ (free).
 #     3. DEEZER (free): find each song's 30-second preview, for Essentia.
@@ -48,7 +48,7 @@ suppressPackageStartupMessages({
 
 # ---- Settings ---------------------------------------------------------------
 
-TEST_PLAYLIST  <- "semi background songs"   # exact name, as in Spotify
+TEST_PLAYLIST  <- "Semi-background songs"   # exact name, as in Spotify
 MAIN_PLAYLISTS <- c("Everything everything - Part 1", "Everything everything - Part 2")
 N_RANDOM       <- 20     # random comparison songs from Everything everything
 RANDOM_SEED    <- 42     # same seed = same random songs on every run
