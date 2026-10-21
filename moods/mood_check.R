@@ -148,7 +148,10 @@ if (STEP == "prepare") {
     distinct(spotify_id, .keep_all = TRUE) |>
     slice_sample(n = N_RANDOM) |>
     transmute(group = "random", spotify_id, title,
-              artist = sub("\\|.*$", "", artist_names), isrc = NA_character_)
+              artist = sub("\\|.*$", "", artist_names),
+              # the saved copies have ISRCs once the new-releases script has
+              # re-read them; until then this is empty and Deezer is searched
+              isrc = if ("isrc" %in% names(ee)) na_if(isrc, "") else NA_character_)
 
   # ---- 3. Deezer: 30-second previews (free) ----------------------------------------
   message("== 3. Finding the 30-second previews on Deezer")
@@ -163,7 +166,12 @@ if (STEP == "prepare") {
     if (is.null(hit$preview) || !nzchar(hit$preview %||% "")) {
       q <- sprintf('artist:"%s" track:"%s"', gsub('"', "", songs$artist[i]), gsub('"', "", songs$title[i]))
       found <- get_json("https://api.deezer.com/search", list(q = q, limit = 1))$data
-      hit <- if (length(found) > 0) found[[1]] else NULL  # no match: no preview
+      # No match with the strict search: try a plain "artist title" search.
+      if (length(found) == 0) {
+        found <- get_json("https://api.deezer.com/search",
+                          list(q = paste(songs$artist[i], songs$title[i]), limit = 1))$data
+      }
+      hit <- if (length(found) > 0) found[[1]] else NULL  # still no match: no preview
     }
     hit$preview %||% NA_character_
   })

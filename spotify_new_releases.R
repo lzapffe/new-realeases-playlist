@@ -211,7 +211,9 @@ write_state <- function(df, file) {
 
 # The columns of each state file:
 #   TRACK_COLS     - a saved copy of one playlist: one row per song
-#                    (artist_ids/artist_names hold all artists, separated by "|")
+#                    (artist_ids/artist_names hold all artists, separated by "|";
+#                    isrc is the recording's international code, used to find
+#                    the exact song on Deezer)
 #   META_COLS      - one row per saved playlist: Spotify's version code
 #                    ("snapshot"), how many items are read so far, and the last
 #                    song read (used to check that the list hasn't changed)
@@ -233,7 +235,7 @@ write_state <- function(df, file) {
 #                    renamed), when it was created and finished, how many
 #                    songs were added, and when the week was judged for muting
 #                    (after you deleted the playlist)
-TRACK_COLS     <- c("uri", "title", "artists", "artist_ids", "artist_names")
+TRACK_COLS     <- c("uri", "title", "artists", "artist_ids", "artist_names", "isrc")
 META_COLS      <- c("playlist_id", "name", "snapshot", "n_items", "last_uri")
 ARTIST_COLS    <- c("spotify_id", "name", "deezer_id", "deezer_name", "match",
                     "matched_on", "last_checked", "sp_last_checked",
@@ -523,6 +525,8 @@ playlist_paths <- function(pid) {
 #   artist_ids   - all artist IDs joined with "|" (used to find your artists)
 #   artist_names - all artist names joined with "|" ("|" inside a name is
 #                  replaced by "/" so it can't break the splitting later)
+#   isrc         - the recording's international code (empty if Spotify
+#                  doesn't send one, e.g. for album track lists)
 tracks_to_tibble <- function(tracks) {
   tracks <- keep(tracks, function(t) {
     !is.null(t) && !is.null(t$uri) && identical(t$type %||% "track", "track") &&
@@ -539,7 +543,8 @@ tracks_to_tibble <- function(tracks) {
     }),
     artist_names = map_chr(tracks, function(t) {
       paste(gsub("|", "/", art_names(t), fixed = TRUE), collapse = "|")
-    })
+    }),
+    isrc         = map_chr(tracks, function(t) t$external_ids$isrc %||% "")
   )
 }
 
@@ -597,7 +602,17 @@ sync_playlist <- function(pl, allow_full = TRUE) {
   fresh <- FALSE
   n <- 0L
   last_uri <- ""
-  if (nrow(m) == 1 && !FULL_REFRESH) {
+
+  # ONE-TIME: a complete copy saved before the isrc column existed is read
+  # again from the start, so every song gets its ISRC. This only starts on a
+  # Monday (a light day): Part 1 costs ~200 requests, so the read continues
+  # on Tuesday and is done before Thursday.
+  refill_isrc <- nrow(m) == 1 && !is.na(m$snapshot) && nrow(cache) > 0 &&
+    all(is.na(cache$isrc) | cache$isrc == "") &&
+    WEEKDAY == 1 && !PLAYLIST_DUE
+  if (refill_isrc) message("  '", pl$name, "': reading it again to add the ISRCs.")
+
+  if (nrow(m) == 1 && !FULL_REFRESH && !refill_isrc) {
     if (!is.na(m$snapshot) && identical(m$snapshot, pl$snapshot)) return(invisible())
     n <- as.integer(m$n_items %||% "0")
     last_uri <- m$last_uri %||% ""
