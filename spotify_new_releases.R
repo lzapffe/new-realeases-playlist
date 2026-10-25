@@ -224,6 +224,9 @@ write_state <- function(df, file) {
 #                    (empty = not muted) and how many of their songs were in
 #                    your source playlists at that moment
 #   PEND_COLS      - releases found on Deezer, not yet looked up on Spotify
+#                    (deezer_artist_id: which of your Deezer artists it came from)
+#   SKIPPED_COLS   - releases skipped because their Spotify artists aren't the
+#                    artist you have (e.g. a different singer with the same name)
 #   SEEN_COLS      - releases already handled, so none is added twice
 #                    (IDs start with "dz:" for Deezer or "sp:" for Spotify)
 #   STAGED_COLS    - songs waiting to be added to the next weekly playlist
@@ -241,7 +244,10 @@ ARTIST_COLS    <- c("spotify_id", "name", "deezer_id", "deezer_name", "match",
                     "matched_on", "last_checked", "sp_last_checked",
                     "misses", "last_judged", "muted_on", "songs_at_mute")
 PEND_COLS      <- c("deezer_album_id", "title", "artist", "release_date", "upc",
-                    "record_type", "nb_tracks", "first_track_id", "found_on", "attempts")
+                    "record_type", "nb_tracks", "first_track_id", "found_on", "attempts",
+                    "deezer_artist_id")
+SKIPPED_COLS   <- c("skipped_on", "artist", "title", "release_date", "your_artist",
+                    "spotify_artists", "deezer_album_id")
 SEEN_COLS      <- c("release_id", "found_on")
 STAGED_COLS    <- c("uri", "title", "artists", "artist_ids", "release_id",
                     "release_date", "staged_on")
@@ -254,6 +260,7 @@ PUBLISHED_COLS <- c("week", "playlist_id", "status", "created_on", "finished_on"
 META      <- read_state("playlists_meta.csv", META_COLS)
 ARTISTS   <- read_state("artists.csv", ARTIST_COLS)
 PENDING   <- read_state("pending_releases.csv", PEND_COLS)
+SKIPPED   <- read_state("skipped_releases.csv", SKIPPED_COLS)
 STAGED    <- read_state("staged_tracks.csv", STAGED_COLS)
 WEEK_SONGS <- read_state("week_songs.csv", WEEK_SONG_COLS)
 
@@ -290,6 +297,7 @@ save_state <- function() {
                 c("not_found", "(none)", "uncertain", "name", "matched", "manual"))
   write_state(ARTISTS[order(rank, tolower(ARTISTS$name)), ], "artists.csv")
   write_state(PENDING, "pending_releases.csv")
+  write_state(SKIPPED, "skipped_releases.csv")
   write_state(STAGED, "staged_tracks.csv")
   write_state(WEEK_SONGS, "week_songs.csv")
   write_state(PUBLISHED, "published.csv")
@@ -766,6 +774,23 @@ lookup_release <- function(row) {
   tracks_to_tibble(sp_get_all(sprintf("/albums/%s/tracks", sid)))
 }
 
+# is_your_artist(): check that a release found on Spotify really is by (or
+# features) one of your artists. Deezer sometimes puts several artists with
+# the same name on one artist page (e.g. two singers called Patricia), so a
+# release from that page can be by someone else. The release is kept if any
+# of its songs has, among its artists, the Spotify ID of one of your artists
+# that is matched to the Deezer artist the release came from. Costs no extra
+# requests: the artist IDs come with the songs. Releases found before this
+# check existed have no deezer_artist_id and are kept, as before.
+is_your_artist <- function(tr, row) {
+  did <- row$deezer_artist_id
+  if (is.null(did) || is.na(did) || !nzchar(did)) return(TRUE)
+  yours <- ARTISTS$spotify_id[ARTISTS$deezer_id %in% did]
+  if (length(yours) == 0) return(TRUE)
+  ids <- unlist(strsplit(tr$artist_ids, "|", fixed = TRUE))
+  any(ids %in% yours)
+}
+
 # create_playlist(): create a new playlist in your library and return its ID.
 # Tries the newer address (/me/playlists) first, then the older one
 # (/users/{your id}/playlists) if Spotify doesn't recognise it.
@@ -1066,43 +1091,6 @@ unmute_returning <- function(src) {
   }
 }
 
-# ---- ONE-TIME: catch-up for week 41 (remove after 23 October 2026) ----------
-# backfill_week_records(): week 41 was made before muting existed, so the
-# script has no record of its songs. This reads the songs of any finished,
-# not yet judged weekly playlist that is still in your library but has no
-# record, and saves them in week_songs.csv as if they had been recorded when
-# added. Each song's album counts as its release ("sp:" + Spotify album ID).
-# Costs about one Spotify request per 100 songs, once per week caught up.
-# Once week 41 is recorded (or judged), this does nothing, so it can be
-# deleted together with its call in phase 1 (search for "ONE-TIME").
-backfill_week_records <- function() {
-  todo <- PUBLISHED |>
-    filter(status == "done", is.na(judged_on), !is.na(playlist_id),
-           playlist_id %in% MY_PL$id, !week %in% WEEK_SONGS$week)
-  for (w in seq_len(nrow(todo))) {
-    pid    <- todo$playlist_id[w]
-    tracks <- map(sp_get_all(playlist_paths(pid)), item_track)
-
-    # Keep the same songs tracks_to_tibble() keeps, so the album details line
-    # up with its rows.
-    tracks <- keep(tracks, function(t) {
-      !is.null(t) && !is.null(t$uri) && identical(t$type %||% "track", "track") &&
-        !isTRUE(t$is_local)
-    })
-    if (length(tracks) == 0) next
-    rec <- tracks_to_tibble(tracks) |>
-      mutate(week         = todo$week[w],
-             playlist_id  = pid,
-             release_id   = paste0("sp:", map_chr(tracks, function(t) t$album$id %||% t$uri)),
-             release_date = map_chr(tracks, function(t) t$album$release_date %||% NA_character_))
-    WEEK_SONGS <<- bind_rows(WEEK_SONGS, rec[WEEK_SONG_COLS])
-    write_state(WEEK_SONGS, "week_songs.csv")
-    message("Recorded ", nrow(rec), " song(s) from '", todo$week[w],
-            "' for muting (one-time catch-up).")
-  }
-}
-# ---- END ONE-TIME ------------------------------------------------------------
-
 # ---- Running the phases -----------------------------------------------------
 
 # Flags that record why a run stopped early:
@@ -1196,10 +1184,6 @@ tryCatch({
   # Get your list of playlists (with version codes and song counts).
   message("== 1. Updating local copies of your playlists")
   run_phase(MY_PL <- fetch_my_playlists())
-
-  # ONE-TIME (remove after 23 October 2026): record week 41's songs for muting.
-  # Skipped on days the weekly playlist is built or finished, to save requests.
-  if (spotify_ok() && !PLAYLIST_DUE) run_phase(backfill_week_records())
 
   # Look up the IDs of all playlists the script needs, and update each saved
   # copy (skipped if Spotify is unreachable or the budget is used up). On
@@ -1362,7 +1346,8 @@ tryCatch({
             nb_tracks      = as.character(det$nb_tracks %||% NA_character_),
             first_track_id = id_chr(pluck(det, "tracks", "data", 1, "id")),
             found_on       = as.character(TODAY),
-            attempts       = "0"
+            attempts       = "0",
+            deezer_artist_id = did
           ))
           mark_seen(rid)
           message("  new: ", det$artist$name %||% "?", " - ", a$title %||% "?",
@@ -1403,7 +1388,23 @@ tryCatch({
         check_time()
         row <- PENDING[i, ]
         tr  <- lookup_release(row)
-        if (!is.null(tr)) {
+        if (!is.null(tr) && !is_your_artist(tr, row)) {
+          # Found, but by a different artist on Spotify: not added, but listed
+          # in skipped_releases.csv so you can check what was left out.
+          message("  skipped (different artist on Spotify): ", row$artist, " - ", row$title)
+          SKIPPED <- bind_rows(SKIPPED, tibble(
+            skipped_on      = as.character(TODAY),
+            artist          = row$artist,
+            title           = row$title,
+            release_date    = row$release_date,
+            your_artist     = paste(ARTISTS$name[ARTISTS$deezer_id %in% row$deezer_artist_id],
+                                    collapse = ", "),
+            spotify_artists = paste(unique(unlist(strsplit(tr$artists, ", ", fixed = TRUE))),
+                                    collapse = ", "),
+            deezer_album_id = row$deezer_album_id
+          ))
+          done <- c(done, row$deezer_album_id)
+        } else if (!is.null(tr)) {
           stage_tracks(tr, paste0("dz:", row$deezer_album_id), row$release_date)
           done <- c(done, row$deezer_album_id)
         } else {
