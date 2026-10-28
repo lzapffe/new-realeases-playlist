@@ -1,0 +1,48 @@
+# =============================================================================
+# GitHub Actions workflow: runs cleanup/wrong_artists.R when you start it by
+# hand, and saves the lists (cleanup/) and the cleaned waiting list (state/).
+# Goes in .github/workflows/wrong-artists.yml in the new-releases repository.
+# Uses only the saved files, so no Spotify requests and no secrets.
+# =============================================================================
+
+name: Wrong-artist cleanup
+
+# Only started by hand, with the "Run workflow" button.
+on:
+  workflow_dispatch:
+
+# "contents: write" lets the last step commit the results.
+permissions:
+  contents: write
+
+# Shares its queue with the daily new-releases workflow, so their commits
+# never clash.
+concurrency:
+  group: spotify-new-releases
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: any::dplyr
+
+      - name: Find wrong-artist songs
+        run: Rscript cleanup/wrong_artists.R
+
+      - name: Save results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
+          git add cleanup/*.csv state/staged_tracks.csv
+          git diff --cached --quiet || git commit -m "Wrong-artist cleanup lists"
+          git pull --rebase
+          git push
