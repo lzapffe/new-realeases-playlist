@@ -611,16 +611,7 @@ sync_playlist <- function(pl, allow_full = TRUE) {
   n <- 0L
   last_uri <- ""
 
-  # ONE-TIME: a complete copy saved before the isrc column existed is read
-  # again from the start, so every song gets its ISRC. This only starts on a
-  # Monday (a light day): Part 1 costs ~200 requests, so the read continues
-  # on Tuesday and is done before Thursday.
-  refill_isrc <- nrow(m) == 1 && !is.na(m$snapshot) && nrow(cache) > 0 &&
-    all(is.na(cache$isrc) | cache$isrc == "") &&
-    WEEKDAY == 1 && !PLAYLIST_DUE
-  if (refill_isrc) message("  '", pl$name, "': reading it again to add the ISRCs.")
-
-  if (nrow(m) == 1 && !FULL_REFRESH && !refill_isrc) {
+  if (nrow(m) == 1 && !FULL_REFRESH) {
     if (!is.na(m$snapshot) && identical(m$snapshot, pl$snapshot)) return(invisible())
     n <- as.integer(m$n_items %||% "0")
     last_uri <- m$last_uri %||% ""
