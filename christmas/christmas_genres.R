@@ -131,6 +131,11 @@ if (WEEKDAY %in% BLOCKED_DAYS) {
   quit(save = "no", status = 0)
 }
 
+# Log this run in state/spotify_request_log.csv when it ends (shared helper,
+# see spotify_log.R in the repository's top folder), to learn Spotify's limit.
+source("spotify_log.R")
+spotify_log_start("christmas", function() SPOTIFY_USED)
+
 # ---- Helpers and state files --------------------------------------------------
 
 # "a %||% b" returns a, unless a is missing (NULL or empty), then it returns b.
@@ -293,6 +298,7 @@ sp <- function(path, method = "GET", query = list(), body = NULL) {
   if (!is.null(body)) req <- req_body_json(req, body)
   resp <- req_perform(req)
   if (resp_status(resp) == 429) {
+    spotify_log_429(resp_header(resp, "Retry-After"))
     save_all()
     stop("Spotify said 'too many requests'. Progress is saved; try again on another day.",
          call. = FALSE)
@@ -652,3 +658,6 @@ if (length(left) == 0) {
 } else {
   message("Still to make: ", paste(left, collapse = ", "), ". Run again on a Monday or Tuesday.")
 }
+
+# Mark the run as finished in the Spotify request log.
+spotify_log_done()

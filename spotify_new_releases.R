@@ -375,6 +375,11 @@ TOKEN_TIME   <- Sys.time()
 SPOTIFY_USED <- 0
 BLOCKED      <- FALSE
 
+# Log this run in state/spotify_request_log.csv when it ends (shared helper,
+# see spotify_log.R), to learn Spotify's limit over time.
+source("spotify_log.R")
+spotify_log_start("new releases (daily)", function() SPOTIFY_USED)
+
 # refresh_token(): get a new access token and note the time. Called by
 # sp_req() when the token is older than 50 minutes, or when Spotify answers
 # 401 ("expired access token"). This talks to Spotify's login service, not
@@ -449,6 +454,7 @@ sp_req <- function(path_or_url, method = "GET", body = NULL, query = list()) {
   }
   if (resp_status(resp) == 429) {
     BLOCKED <<- TRUE
+    spotify_log_429(resp_header(resp, "Retry-After"), spotify_reason(resp))
     stop_run(sprintf("Spotify refused more requests (HTTP 429, reason: %s, Retry-After: %s s).",
                      spotify_reason(resp), resp_header(resp, "Retry-After") %||% "?"),
              "spotify_stop")
@@ -1550,3 +1556,7 @@ if (BLOCKED) {
   message("Spotify blocked further requests. Progress is saved; the next run will continue.")
   quit(save = "no", status = 1)
 }
+
+# Mark the run as finished in the Spotify request log (reached only when
+# Spotify didn't block).
+spotify_log_done()

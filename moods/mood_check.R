@@ -59,6 +59,11 @@ RESULTS_DIR    <- "moods/results"
 # Which part to run: "prepare" or "compare" (given by the workflow).
 STEP <- commandArgs(trailingOnly = TRUE)[1]
 if (!STEP %in% c("prepare", "compare")) stop("Run with 'prepare' or 'compare'.", call. = FALSE)
+
+# Log this run's Spotify requests in state/spotify_request_log.csv when it
+# ends (shared helper, see spotify_log.R). Runs without requests aren't logged.
+source("spotify_log.R")
+spotify_log_start(paste0("mood checker (", STEP, ")"))
 dir.create(WORK_DIR, recursive = TRUE, showWarnings = FALSE)
 dir.create(RESULTS_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -105,10 +110,12 @@ if (STEP == "prepare") {
     items <- list()
     while (!is.null(url)) {
       used <<- used + 1
+      spotify_log_add()   # count it in the shared Spotify request log
       if (used > 10) stop("More than 10 Spotify requests needed; stopped to protect the quota.", call. = FALSE)
       Sys.sleep(0.5)
       r <- request(url) |> req_auth_bearer_token(token) |>
         req_error(is_error = function(r) FALSE) |> req_perform()
+      if (resp_status(r) == 429) spotify_log_429(resp_header(r, "Retry-After"))
       if (resp_status(r) == 429) stop("Spotify says 'too many requests'; try another day.", call. = FALSE)
       if (resp_status(r) >= 400) stop("Spotify error ", resp_status(r), ": ", resp_body_string(r), call. = FALSE)
       page  <- resp_body_json(r)
@@ -290,3 +297,6 @@ if (STEP == "compare") {
   }
   message("\nFull results: moods/results/mood_songs.csv and moods/results/mood_summary.csv")
 }
+
+# Mark the run as finished in the Spotify request log.
+spotify_log_done()

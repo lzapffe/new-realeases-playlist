@@ -1,0 +1,7 @@
+"script","started","ended","weekday","requests","result","retry_after_s","reason","note"
+"new releases (daily)","2026-11-02 10:20:01","2026-11-02 10:52:59","Monday",30,"finished",,,"added by hand from the log"
+"christmas","2026-11-02 10:56:48","2026-11-02 11:00:34","Monday",9,"stopped early",,,"added by hand; Spotify 502 error; about 9 requests"
+"christmas","2026-11-02 11:13:00","2026-11-02 11:15:00","Monday",46,"finished",,,"added by hand; times approximate"
+"remove week 43","2026-11-02 11:26:00","2026-11-02 11:27:00","Monday",6,"finished",,,"added by hand; times approximate"
+"christmas","2026-11-02 11:29:00","2026-11-02 11:31:00","Monday",44,"finished",,,"added by hand; times approximate"
+"christmas","2026-11-02 11:33:00","2026-11-02 11:34:17","Monday",46,"finished",,,"added by hand; end time from the log"
