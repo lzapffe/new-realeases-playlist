@@ -1,0 +1,49 @@
+# =============================================================================
+# GitHub Actions workflow (ONE-TIME, delete on 11 November 2026): runs
+# cleanup/remove_week43.R when you start it by hand. It removes the week 43
+# wrong-artist songs from that playlist on Spotify (about 6 requests).
+# Goes in .github/workflows/remove-week43.yml in the new-releases repository.
+# It changes nothing in the repository, so it has nothing to commit.
+# =============================================================================
+
+name: Remove week 43 wrong-artist songs
+
+# Only started by hand, with the "Run workflow" button.
+on:
+  workflow_dispatch:
+
+# Read-only access to the repository is enough.
+permissions:
+  contents: read
+
+# Shares its queue with the daily new-releases workflow, so the two never use
+# Spotify at the same time.
+concurrency:
+  group: spotify-new-releases
+  cancel-in-progress: false
+
+jobs:
+  remove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Copy the repository onto the machine (the list and state/published.csv).
+      - uses: actions/checkout@v5
+
+      # Install R and the two packages the script needs.
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::httr2
+            any::dplyr
+
+      # Run the clean-up with the same Spotify secrets as the daily run.
+      - name: Remove the songs
+        run: Rscript cleanup/remove_week43.R
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+          SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
