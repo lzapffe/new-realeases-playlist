@@ -122,6 +122,11 @@ clean_title <- function(x) {
 target <- function(g) if (g %in% names(MORE_SONGS)) MORE_SONGS[[g]] else SONGS_PER_PLAYLIST
 main_artist <- function(x) trimws(tolower(sub(",.*$", "", x)))
 norm_key    <- function(title, artist) paste(clean_title(title), main_artist(artist), sep = "|")
+# exact_key(): a strict key for "exactly the same song" (Linn, 2 Nov 2026): the
+# title and the full artist list exactly as written, ignoring only upper and
+# lower case. "Blue Christmas" by "Elvis Presley" does NOT match "Blue
+# Christmas - Live" or "Blue Christmas" by "Elvis Presley, The Jordanaires".
+exact_key   <- function(title, artists) paste(tolower(trimws(title)), tolower(trimws(artists)), sep = "|")
 
 # The state folder and its files (all plain CSV, text columns):
 #   searches.csv     - every Spotify search done: the song key, title, artist
@@ -152,7 +157,7 @@ SEARCHES  <- read_state("searches.csv", c("key", "title", "artist", "uri", "sear
 PICKS     <- read_state("picks.csv", c("genre", "key", "uri", "title", "artist", "source", "added_on"))
 MADE      <- read_state("playlists.csv", c("genre", "playlist_id", "n_songs", "made_on"))
 ART_TAGS  <- read_state("artist_tags.csv", c("artist", "tags"))
-XMAS_KNOWN <- read_state("christmas_known.csv", c("uri", "key", "snapshot"))
+XMAS_KNOWN <- read_state("christmas_known.csv", c("uri", "key", "exact", "snapshot"))
 
 # save_all(): write every state file. Called after each step and at the end.
 save_all <- function() {
@@ -314,17 +319,20 @@ meta  <- read.csv("state/playlists_meta.csv", colClasses = "character")
 main  <- map_dfr(meta$playlist_id[meta$name %in% MAIN_PLAYLISTS], function(id) {
   read.csv(sprintf("state/playlist_%s.csv", id), colClasses = "character", encoding = "UTF-8")
 })
-known_keys <- norm_key(main$title, main$artists)
+known_keys  <- norm_key(main$title, main$artists)
+known_exact <- exact_key(main$title, main$artists)
 known_uris <- main$uri
 
 # Your Christmas edition: find it in your playlist list (1-2 requests). It is
-# read again only if its version code ("snapshot") changed since last time.
+# read again only if its version code ("snapshot") changed since last time, or
+# if the saved copy is from before the "exact" column was added (one re-read).
 my_pl <- sp_all("/me/playlists")
 if (is.null(my_pl)) stop("Spotify budget used up while reading your playlists.", call. = FALSE)
 xmas <- detect(my_pl, function(p) identical(p$name, CHRISTMAS_PLAYLIST))
 if (is.null(xmas)) stop("No playlist named '", CHRISTMAS_PLAYLIST, "' found. ",
                         "Check CHRISTMAS_PLAYLIST in the settings.", call. = FALSE)
-if (nrow(XMAS_KNOWN) == 0 || !identical(XMAS_KNOWN$snapshot[1], xmas$snapshot_id)) {
+if (nrow(XMAS_KNOWN) == 0 || !identical(XMAS_KNOWN$snapshot[1], xmas$snapshot_id) ||
+    any(is.na(XMAS_KNOWN$exact))) {
   items <- sp_all(sprintf("/playlists/%s/items", xmas$id))
   if (is.null(items)) stop("Spotify budget used up while reading your Christmas playlist.", call. = FALSE)
   tracks <- compact(map(items, function(it) it$item %||% it$track))
@@ -333,13 +341,21 @@ if (nrow(XMAS_KNOWN) == 0 || !identical(XMAS_KNOWN$snapshot[1], xmas$snapshot_id
     uri      = map_chr(tracks, "uri"),
     key      = norm_key(map_chr(tracks, function(t) t$name %||% ""),
                         map_chr(tracks, function(t) t$artists[[1]]$name %||% "")),
+    exact    = exact_key(map_chr(tracks, function(t) t$name %||% ""),
+                         map_chr(tracks, function(t) paste(map_chr(t$artists, function(a) a$name %||% ""),
+                                                            collapse = ", "))),
     snapshot = xmas$snapshot_id %||% NA_character_
   )
   message("Read your Christmas edition: ", nrow(XMAS_KNOWN), " songs.")
 }
 known_keys <- unique(c(known_keys, XMAS_KNOWN$key))
 known_uris <- unique(c(known_uris, XMAS_KNOWN$uri))
-message(length(known_keys), " songs you already have will be left out.")
+known_exact <- unique(c(known_exact, XMAS_KNOWN$exact))
+# Only exact matches count as "already have" (Linn, 2 Nov 2026): a song is left
+# out if its exact title + artists (free check, step 2) or its Spotify ID (step 3)
+# is in your playlists, so other versions (live, remaster, remix) of songs you
+# have can still be picked.
+message(length(known_exact), " songs you already have (exact title and artists) will be left out.")
 save_all()
 
 # ---- 2. Last.fm: candidate songs per genre ----------------------------------------
@@ -373,7 +389,7 @@ CANDIDATES <- map(setNames(todo_genres, todo_genres), function(g) {
     mutate(source = "artist genre")
   bind_rows(combined, filler) |>
     mutate(key = norm_key(title, artist)) |>
-    filter(nzchar(key), !key %in% known_keys) |>
+    filter(nzchar(key), !exact_key(title, artist) %in% known_exact) |>   # exact title + artists only
     distinct(key, .keep_all = TRUE)
 })
 walk2(names(CANDIDATES), CANDIDATES, function(g, c) message("  ", g, ": ", nrow(c), " candidates"))
