@@ -1,7 +1,8 @@
 # =============================================================================
 # GitHub Actions workflow: runs christmas/christmas_genres.R when you start it
-# by hand, then saves its progress (the christmas/state/ folder) back into the
-# repository so the next run continues from there.
+# by hand, then saves its progress (the christmas/state/ folder) and the genre
+# overview (christmas/genre_overview.xlsx) back into the repository, so the
+# next run continues from there.
 # Goes in .github/workflows/christmas-genres.yml in the new-releases repository.
 # =============================================================================
 
@@ -48,6 +49,8 @@ jobs:
             any::dplyr
             any::purrr
             any::tibble
+            any::readxl
+            any::writexl
 
       # Run the script. The secrets come from Settings -> Secrets and
       # variables -> Actions: the three Spotify ones you already have, plus
@@ -70,6 +73,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
             git add christmas/state
+            [ -f christmas/genre_overview.xlsx ] && git add christmas/genre_overview.xlsx
             git diff --cached --quiet || git commit -m "Update Christmas playlist state"
             git pull --rebase
             git push

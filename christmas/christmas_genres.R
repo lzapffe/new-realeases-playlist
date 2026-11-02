@@ -5,19 +5,26 @@
 # "Christmas × Soul", ...), with songs you don't already have.
 #
 # Each run:
-#   1. LAST.FM (free, no Spotify quota): collect candidate songs per genre:
-#      a. songs tagged with a combined tag such as "country christmas" or
-#         "christmas country" (the strongest matches, used first), and
-#      b. the most-tagged "christmas" songs whose ARTIST is tagged with the
-#         genre (fills up the rest).
-#   2. Leave out songs you already have: everything in Everything everything
+#   1. Leave out songs you already have: everything in Everything everything
 #      Part 1/2 (read from the new-releases script's saved copies in state/,
 #      at no cost) and in your Christmas edition (read from Spotify, a few
-#      requests, only when it has changed).
-#   3. SPOTIFY: find each candidate on Spotify with one search per song,
-#      until each genre has SONGS_PER_PLAYLIST songs or the run's request
-#      budget (MAX_SPOTIFY_REQUESTS) is used up. Every search result is saved,
-#      so no song is ever searched twice.
+#      requests, only when it has changed). Only exact matches count.
+#   2. LAST.FM (free, no Spotify quota): for every Last.fm tag in the pool,
+#      count the available songs: songs tagged with a combined tag such as
+#      "country christmas" or "christmas country", plus the most-tagged
+#      "christmas" songs whose ARTIST has the tag. Write them to the overview
+#      christmas/genre_overview.xlsx, where you mark each tag "include" or
+#      "exclude" (blank = not looked at yet; blank rows are at the top).
+#      Included tags become genres (grouped by the "playlist" column). Their
+#      candidates are saved in christmas/state/candidates.csv and keep
+#      growing over the years. Excluded tags feed the random "Mix" playlist.
+#   3. SPOTIFY: for genres with at least MIN_CANDIDATES candidates, find each
+#      candidate on Spotify with one search per song, until each genre has
+#      SONGS_PER_PLAYLIST songs or the run's request budget
+#      (MAX_SPOTIFY_REQUESTS) is used up. Every search result is saved, so no
+#      song is searched twice; songs not found are tried again after a year.
+#      Genres with fewer candidates cost no Spotify requests; they wait until
+#      a later run (or a bigger pool) brings enough.
 #   4. SPOTIFY: when a genre has enough songs, create its playlist and add the
 #      songs (2 requests per playlist).
 # Progress is saved in christmas/state/ and committed by the workflow, so the
@@ -38,11 +45,14 @@
 #   dplyr - filtering and combining tables
 #   purrr - map() for working with lists from the APIs
 #   tibble - the table format used throughout
+#   readxl / writexl - read and write the Excel genre overview
 suppressPackageStartupMessages({
   library(httr2)
   library(dplyr)
   library(purrr)
   library(tibble)
+  library(readxl)
+  library(writexl)
 })
 
 # ---- Settings ---------------------------------------------------------------
@@ -52,8 +62,12 @@ suppressPackageStartupMessages({
 CHRISTMAS_PLAYLIST <- "Everything everything - Christmas edition"
 MAIN_PLAYLISTS     <- c("Everything everything - Part 1", "Everything everything - Part 2")
 
-# The genres. The name is used in the playlist name ("Christmas × Country");
-# the tags are the Last.fm tags that count as that genre (lowercase).
+# The STARTING genres. Since 2 Nov 2026 the genres are chosen in the Excel
+# overview (christmas/genre_overview.xlsx); this list is only used to fill in
+# that file the first time it is made (each tag below is marked "include",
+# with the genre name in its "playlist" column). After that, change genres in
+# the Excel file, not here. The name is used in the playlist name
+# ("Christmas × Country"); the tags are Last.fm tags (lowercase).
 GENRES <- list(
   "Country"   = c("country", "alt-country"),
   "Bluegrass" = c("bluegrass"),
@@ -65,8 +79,23 @@ GENRES <- list(
   "Celtic"    = c("celtic", "irish", "scottish"),
   "Indie"     = c("indie", "indie pop", "indie rock"),
   "Rock"      = c("rock", "classic rock", "alternative rock"),
-  "Lo-fi"     = c("lo-fi", "lofi", "chillhop")
+  "Lo-fi"     = c("lo-fi", "lofi", "chillhop"),
+  # Added 2 Nov 2026 (Linn):
+  "R&B"       = c("rnb", "r&b", "rhythm and blues"),
+  "Acoustic"  = c("acoustic"),
+  "Pop"       = c("pop")
 )
+
+# The genre overview (Excel) and the mix.
+OVERVIEW_FILE        <- "christmas/genre_overview.xlsx"
+OVERVIEW_MIN_ARTISTS <- 3     # a tag is listed when at least this many pool artists have it
+SKIP_TAGS <- c("christmas", "xmas", "holiday", "christmas music", "christmas songs",
+               "seen live")   # never listed: they say nothing about the genre
+MIN_CANDIDATES <- 45  # a genre is searched on Spotify only from this many candidates
+                      # (about 1 in 4 is not on Spotify or is one you have)
+MIX_GENRE <- "Mix"    # the playlist made at random from the tags marked "exclude"
+MIX_SEED  <- 2026     # fixed, so the random order is the same on every run
+RETRY_AFTER_DAYS <- 365  # songs not found on Spotify are searched again after this
 
 SONGS_PER_PLAYLIST   <- 35     # songs per genre playlist
 
@@ -76,7 +105,8 @@ SONGS_PER_PLAYLIST   <- 35     # songs per genre playlist
 # already in it are never searched or added again.
 MORE_SONGS <- c()
 MIN_SONGS            <- 10     # a genre with fewer than this is not made
-CHRISTMAS_POOL_PAGES <- 10     # pages of 100 "christmas" songs used as filler
+CHRISTMAS_POOL_PAGES <- 10     # pages of 100 "christmas" songs used as filler;
+                               # raise it (e.g. to 20) for a bigger pool later
 MIN_ARTIST_TAG       <- 20     # how strongly (0-100) an artist must be tagged
 MAX_SPOTIFY_REQUESTS <- 50     # per run; keeps the day's total below the quota
 PLAYLIST_PUBLIC      <- FALSE  # the Christmas playlists are private
@@ -136,6 +166,8 @@ exact_key   <- function(title, artists) paste(tolower(trimws(title)), tolower(tr
 #   playlists.csv    - the playlists made: genre, Spotify ID, number of songs
 #   artist_tags.csv  - Last.fm tags per artist (saves Last.fm requests next run)
 #   christmas_known.csv - a copy of your Christmas edition, with its version code
+#   candidates.csv   - every candidate song found so far for each included
+#                      genre (kept across runs and years, so small genres grow)
 dir.create(STATE_DIR, recursive = TRUE, showWarnings = FALSE)
 state_path <- function(f) file.path(STATE_DIR, f)
 
@@ -158,9 +190,11 @@ PICKS     <- read_state("picks.csv", c("genre", "key", "uri", "title", "artist",
 MADE      <- read_state("playlists.csv", c("genre", "playlist_id", "n_songs", "made_on"))
 ART_TAGS  <- read_state("artist_tags.csv", c("artist", "tags"))
 XMAS_KNOWN <- read_state("christmas_known.csv", c("uri", "key", "exact", "snapshot"))
+CANDS     <- read_state("candidates.csv", c("genre", "key", "title", "artist", "source", "first_seen"))
 
 # save_all(): write every state file. Called after each step and at the end.
 save_all <- function() {
+  write_state(CANDS, "candidates.csv")
   write_state(SEARCHES, "searches.csv")
   write_state(PICKS, "picks.csv")
   write_state(MADE, "playlists.csv")
@@ -358,41 +392,156 @@ known_exact <- unique(c(known_exact, XMAS_KNOWN$exact))
 message(length(known_exact), " songs you already have (exact title and artists) will be left out.")
 save_all()
 
-# ---- 2. Last.fm: candidate songs per genre ----------------------------------------
+# ---- 2. Last.fm: the genre overview and the candidate songs ------------------------
 message("== 2. Collecting Christmas songs per genre from Last.fm")
 
-# The shared filler pool: the most-tagged "christmas" songs on Last.fm.
+# The shared pool: the most-tagged "christmas" songs on Last.fm, with each
+# artist's strong tags (saved in artist_tags.csv, so mostly free after the
+# first run).
 pool <- tag_tracks("christmas", CHRISTMAS_POOL_PAGES) |>
   mutate(key = norm_key(title, artist)) |>
   distinct(key, .keep_all = TRUE)
+pool$tags <- map(pool$artist, artist_tags)
 message(nrow(pool), " songs in the 'christmas' pool.")
 
-# For each genre not yet made, build the ordered candidate list:
-#   a. songs with a combined tag ("<genre tag> christmas" or "christmas <genre
-#      tag>"), strongest first,
-#   b. pool songs whose artist is tagged with one of the genre's tags,
-# then remove songs you already have and duplicates.
-# Genres to work on: those without a playlist yet, plus made ones whose
-# target was raised in MORE_SONGS and that have fewer songs than that.
-todo_genres <- keep(names(GENRES), function(g) {
-  !g %in% MADE$genre || sum(PICKS$genre == g) < target(g)
-})
-CANDIDATES <- map(setNames(todo_genres, todo_genres), function(g) {
-  tags <- GENRES[[g]]
-  combined <- map_dfr(tags, function(t) {
-    bind_rows(tag_tracks(paste(t, "christmas")), tag_tracks(paste("christmas", t)))
-  }) |>
+# 2a. Your decisions, read from the Excel overview: one row per tag, with
+# "include" or "exclude" in the decision column (blank = not looked at yet)
+# and, optionally, a playlist name that groups several tags into one genre.
+# The first time, when the file doesn't exist yet, the tags in GENRES are
+# filled in as "include", with their genre as the playlist name.
+xl_col <- function(df, name) {
+  if (name %in% names(df)) as.character(df[[name]]) else rep(NA_character_, nrow(df))
+}
+if (file.exists(OVERVIEW_FILE)) {
+  old <- read_excel(OVERVIEW_FILE, col_types = "text")
+  decisions <- tibble(tag      = tolower(trimws(xl_col(old, "tag"))),
+                      decision = tolower(trimws(coalesce(xl_col(old, "decision"), ""))),
+                      playlist = trimws(coalesce(xl_col(old, "playlist"), "")))
+} else {
+  decisions <- tibble(tag      = unlist(GENRES, use.names = FALSE),
+                      decision = "include",
+                      playlist = rep(names(GENRES), lengths(GENRES)))
+}
+decisions <- decisions |>
+  filter(!is.na(tag), nzchar(tag)) |>
+  distinct(tag, .keep_all = TRUE)
+
+# 2b. The tags to list: every tag that at least OVERVIEW_MIN_ARTISTS pool
+# artists have, plus every tag you have already decided on.
+tag_artists <- map2_dfr(pool$artist, pool$tags, function(a, t) {
+  if (length(t) == 0) NULL else tibble(artist = a, tag = t)
+}) |>
+  distinct()
+artist_count <- count(tag_artists, tag, name = "pool_artists")
+list_tags <- union(artist_count$tag[artist_count$pool_artists >= OVERVIEW_MIN_ARTISTS],
+                   decisions$tag)
+list_tags <- setdiff(list_tags[nzchar(list_tags)], SKIP_TAGS)
+message(length(list_tags), " tags in the overview.")
+
+# 2c. The available songs for each tag, counting both sources as one list:
+#   a. songs with a combined tag ("<tag> christmas" or "christmas <tag>",
+#      2 Last.fm requests), strongest first,
+#   b. pool songs whose artist has the tag.
+# Songs you already have (exact title and artists) and duplicates are left out.
+tag_songs <- map(setNames(list_tags, list_tags), function(t) {
+  combined <- bind_rows(tag_tracks(paste(t, "christmas")), tag_tracks(paste("christmas", t))) |>
     mutate(source = "combined tag")
   filler <- pool |>
-    filter(map_lgl(artist, function(a) any(artist_tags(a) %in% tags))) |>
+    filter(map_lgl(tags, function(x) t %in% x)) |>
     select(title, artist) |>
     mutate(source = "artist genre")
   bind_rows(combined, filler) |>
     mutate(key = norm_key(title, artist)) |>
-    filter(nzchar(key), !exact_key(title, artist) %in% known_exact) |>   # exact title + artists only
+    filter(nzchar(key), !exact_key(title, artist) %in% known_exact) |>
     distinct(key, .keep_all = TRUE)
 })
-walk2(names(CANDIDATES), CANDIDATES, function(g, c) message("  ", g, ": ", nrow(c), " candidates"))
+
+# 2d. The genres: every tag marked "include", grouped by its playlist name
+# (a blank playlist name means the tag gets its own playlist, e.g. "Gospel").
+inc <- decisions |>
+  filter(decision == "include", tag %in% list_tags) |>
+  mutate(genre = ifelse(nzchar(playlist), playlist, tools::toTitleCase(tag)))
+genre_tags <- split(inc$tag, inc$genre)
+excluded   <- intersect(decisions$tag[decisions$decision == "exclude"], list_tags)
+
+# 2e. Each genre's candidates: the combined-tag songs of all its tags first,
+# then the artist-genre ones. Earlier runs' candidates (candidates.csv) are
+# kept and added at the end, so a small genre keeps growing over the years
+# (for example when CHRISTMAS_POOL_PAGES is raised for a bigger pool).
+CANDIDATES <- map(setNames(names(genre_tags), names(genre_tags)), function(g) {
+  now <- bind_rows(tag_songs[genre_tags[[g]]]) |>
+    arrange(source != "combined tag") |>
+    distinct(key, .keep_all = TRUE)
+  before <- CANDS |>
+    filter(genre == g, !key %in% now$key) |>
+    select(title, artist, source, key)
+  bind_rows(now, before)
+})
+
+# 2f. The mix: songs from the tags marked "exclude" that aren't candidates for
+# any included genre, in a fixed random order. Made only if any tag is excluded.
+if (length(excluded) > 0) {
+  in_genres <- unique(unlist(map(CANDIDATES, "key")))
+  mix <- bind_rows(tag_songs[excluded]) |>
+    distinct(key, .keep_all = TRUE) |>
+    filter(!key %in% in_genres) |>
+    mutate(source = "mix (excluded tags)")
+  set.seed(MIX_SEED)
+  CANDIDATES[[MIX_GENRE]] <- mix[sample(nrow(mix)), ]
+}
+
+# Save every genre's candidates (new ones get today's date), so they are
+# remembered for later runs and years.
+for (g in names(CANDIDATES)) {
+  new_c <- CANDIDATES[[g]] |>
+    filter(!key %in% CANDS$key[CANDS$genre == g]) |>
+    transmute(genre = g, key, title, artist, source, first_seen = as.character(Sys.Date()))
+  CANDS <- bind_rows(CANDS, new_c)
+}
+
+# Genres to work on: those without a playlist yet, plus made ones whose target
+# was raised in MORE_SONGS. Only those with at least MIN_CANDIDATES candidates
+# are searched on Spotify; the others wait for more candidates (no Spotify cost).
+todo_genres <- keep(names(CANDIDATES), function(g) {
+  !g %in% MADE$genre || sum(PICKS$genre == g) < target(g)
+})
+search_genres <- keep(todo_genres, function(g) nrow(CANDIDATES[[g]]) >= MIN_CANDIDATES)
+walk(todo_genres, function(g) {
+  message("  ", g, ": ", nrow(CANDIDATES[[g]]), " candidates",
+          if (g %in% search_genres) "" else sprintf(" (waiting: searched from %d)", MIN_CANDIDATES))
+})
+
+# write_overview(): (re)write the Excel overview. One row per tag: your
+# decision, the playlist name, the available songs (both sources together),
+# how many of them come from combined tags, how many pool artists have the tag,
+# and the state of its playlist. Blank decisions come first (biggest first),
+# then "include" (by playlist), then "exclude". Your decisions are kept.
+genre_status <- function(g) {
+  if (is.na(g) || !nzchar(g)) return("")
+  n_cand  <- nrow(CANDIDATES[[g]] %||% tibble())
+  n_added <- sum(PICKS$genre == g & !is.na(PICKS$added_on))
+  if (g %in% MADE$genre) return(sprintf("playlist made (%d songs)", n_added))
+  if (n_cand < MIN_CANDIDATES) return(sprintf("waiting: %d of %d candidates", n_cand, MIN_CANDIDATES))
+  sprintf("searching: %d of %d songs found", sum(PICKS$genre == g), target(g))
+}
+write_overview <- function() {
+  ov <- tibble(tag = list_tags) |>
+    left_join(decisions, by = "tag") |>
+    left_join(artist_count, by = "tag") |>
+    left_join(select(inc, tag, genre), by = "tag") |>
+    mutate(decision          = coalesce(decision, ""),
+           playlist          = coalesce(playlist, ""),
+           available_songs   = map_int(tag, function(t) nrow(tag_songs[[t]])),
+           from_combined_tags = map_int(tag, function(t) sum(tag_songs[[t]]$source == "combined tag")),
+           pool_artists      = coalesce(pool_artists, 0L),
+           status            = map_chr(genre, genre_status),
+           order             = match(decision, c("", "include", "exclude"))) |>
+    mutate(order = coalesce(order, 4L)) |>
+    arrange(order, if_else(decision == "include", playlist, ""), desc(available_songs)) |>
+    select(decision, playlist, tag, available_songs, from_combined_tags, pool_artists, status)
+  write_xlsx(ov, OVERVIEW_FILE)
+}
+write_overview()
 save_all()
 
 # ---- 3. Spotify: find the songs ---------------------------------------------------
@@ -417,18 +566,24 @@ find_on_spotify <- function(title, artist, key) {
 }
 
 # Fill each genre in turn until it has its target number of songs. Songs already
-# searched (for this or another genre) cost nothing. Songs whose Spotify ID is
-# one you already have are skipped too. Stops when the budget is used up,
-# keeping 6 requests for making playlists.
-for (g in todo_genres) {
+# searched (for this or another genre) cost nothing, except that a song not
+# found on Spotify is searched again once RETRY_AFTER_DAYS have passed. Songs
+# whose Spotify ID is one you already have are skipped too. Only genres with
+# enough candidates (search_genres) are searched. Stops when the budget is used
+# up, keeping 6 requests for making playlists.
+for (g in search_genres) {
   cand <- CANDIDATES[[g]]
   for (i in seq_len(nrow(cand))) {
     if (sum(PICKS$genre == g) >= target(g)) break
     key <- cand$key[i]
     if (key %in% PICKS$key[PICKS$genre == g]) next
-    uri <- SEARCHES$uri[SEARCHES$key == key][1]
-    if (!key %in% SEARCHES$key) {
+    prev  <- which(SEARCHES$key == key)
+    uri   <- SEARCHES$uri[prev][1]
+    stale <- length(prev) > 0 && is.na(uri) &&
+      isTRUE(as.Date(SEARCHES$searched_on[prev[1]]) <= Sys.Date() - RETRY_AFTER_DAYS)
+    if (length(prev) == 0 || stale) {
       if (budget_left() <= 6) break
+      if (stale) SEARCHES <- SEARCHES[-prev, ]   # forget the old "not found"
       uri <- find_on_spotify(cand$title[i], cand$artist[i], key)
     }
     if (is.na(uri) || uri %in% known_uris || uri %in% PICKS$uri[PICKS$genre == g]) next
@@ -448,7 +603,7 @@ message("== 4. Making the finished playlists")
 # one, the songs not added yet are added (1 request per 100):
 #   - no playlist yet: create it first (1 request),
 #   - playlist already made (expanding): add only the new songs to it.
-for (g in todo_genres) {
+for (g in search_genres) {
   n <- sum(PICKS$genre == g)
   searched_all <- all(CANDIDATES[[g]]$key %in% c(SEARCHES$key, PICKS$key[PICKS$genre == g]))
   finished <- n >= target(g) || (searched_all && n >= MIN_SONGS)
@@ -472,22 +627,28 @@ for (g in todo_genres) {
   save_all()
 }
 
-# Genres with too few songs even after searching everything are reported, so
-# you can add more tags for them in the settings.
-for (g in setdiff(todo_genres, MADE$genre)) {
+# Genres with too few songs even after searching all their candidates are
+# reported. They keep collecting candidates in later runs and years.
+for (g in setdiff(search_genres, MADE$genre)) {
   if (all(CANDIDATES[[g]]$key %in% SEARCHES$key) && sum(PICKS$genre == g) < MIN_SONGS) {
-    message("  ", g, ": only ", sum(PICKS$genre == g), " songs found; add more tags in GENRES.")
+    message("  ", g, ": only ", sum(PICKS$genre == g), " songs found on Spotify; it waits for more candidates.")
   }
 }
 
 # ---- Summary ------------------------------------------------------------------------
+# Update the Excel overview's status column, save everything, and report.
+write_overview()
 save_all()
-left <- keep(names(GENRES), function(g) {
+waiting <- setdiff(todo_genres, search_genres)
+left <- keep(search_genres, function(g) {
   !g %in% MADE$genre || any(PICKS$genre == g & is.na(PICKS$added_on))
 })
 message(sprintf("Spotify requests used this run: %d of %d.", SPOTIFY_USED, MAX_SPOTIFY_REQUESTS))
+if (length(waiting) > 0) {
+  message("Waiting for more candidates (no Spotify requests): ", paste(waiting, collapse = ", "), ".")
+}
 if (length(left) == 0) {
-  message("All playlists are made. You don't need to run this again.")
+  message("All playlists with enough candidates are made. Check the overview for new tags.")
 } else {
-  message("Still to make: ", paste(left, collapse = ", "), ". Run again on another Monday-Wednesday.")
+  message("Still to make: ", paste(left, collapse = ", "), ". Run again on a Monday or Tuesday.")
 }
