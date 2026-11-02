@@ -1,0 +1,79 @@
+# =============================================================================
+# GitHub Actions workflow: tone playlists, step 1 (analysis). Gives the songs
+# in Everything everything Essentia mood scores, a batch per run, when you
+# start it by hand, and saves the results (tones/state/ and the Excel overview
+# tones/categories_overview.xlsx) in the repository.
+# Goes in .github/workflows/tones-analysis.yml in the new-releases repository.
+# Uses no Spotify requests (only the saved playlist copies and Deezer), so it
+# can run on any day. A run can take up to about 5 hours.
+# =============================================================================
+
+name: "Tone playlists: analysis"
+
+# Only started by hand, with the "Run workflow" button.
+on:
+  workflow_dispatch:
+
+# "contents: write" lets the last step commit the results.
+permissions:
+  contents: write
+
+# Its own queue: it uses no Spotify requests, so it doesn't need to wait for
+# the daily run (and must not hold the daily run up for hours). Its files are
+# all in tones/, so its commits don't clash with the daily run's.
+concurrency:
+  group: tones-analysis
+  cancel-in-progress: false
+
+jobs:
+  analyse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      # Copy the repository (the scripts, the saved playlist copies in state/
+      # and the scores saved so far in tones/state/).
+      - uses: actions/checkout@v5
+
+      # Install R and the R packages (cached for later runs).
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::dplyr
+            any::writexl
+
+      # Install Python and Essentia (with its TensorFlow models support).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Essentia
+        run: pip install essentia-tensorflow numpy
+
+      # Part 1 (R): pick this run's batch of songs without scores.
+      - name: Pick songs
+        run: Rscript tones/tone_scores.R prepare
+
+      # Part 2 (Python): find the previews on Deezer and analyse them.
+      - name: Essentia analysis
+        run: python tones/essentia_scores.py
+
+      # Part 3 (R): save the scores and write the Excel overview. Runs even if
+      # the analysis stopped early, so nothing that was done is lost.
+      - name: Save scores and overview
+        if: always()
+        run: Rscript tones/tone_scores.R save
+
+      # Commit the results. "git pull --rebase" picks up any commit the daily
+      # workflow made in the meantime.
+      - name: Commit results
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
+          git add tones/state
+          [ -f tones/categories_overview.xlsx ] && git add tones/categories_overview.xlsx
+          git diff --cached --quiet || git commit -m "Tone playlists: analysis results"
+          git pull --rebase
+          git push

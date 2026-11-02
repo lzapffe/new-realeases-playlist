@@ -1,45 +1,53 @@
-# Mood checker
+# Tone playlists
 
-This compares three mood systems on your "semi background songs" playlist to see which one best recognises the mood you hear in it:
+**What this project does:** it makes new Spotify playlists by mood (for example "Happy" or "Calm") from the songs you already have in **Everything everything Part 1 and Part 2**. You decide in an Excel sheet which playlists to make. You run it by hand whenever you want a new playlist.
 
-| System | What it gives | How |
+It has two steps:
+
+1. **Analysis (built 2 November 2026):** every song gets mood scores from Essentia, a free tool that listens to the song's 30-second Deezer preview. Uses **no Spotify requests**.
+2. **Build playlists (not built yet):** you describe a playlist in an Excel sheet and the script creates it on Spotify. This step uses Spotify requests (about 1 per 100 songs), so it waits until there is room after the Christmas runs.
+
+Why Essentia: the mood checker (`moods/`, 28 October 2026) compared three systems on your "semi background songs" playlist. Essentia was the only one with data for every song and separated your songs best (relaxed, not aggressive). ReccoBeats had no data for 17 of 41 songs, and Last.fm only had genre tags, not moods.
+
+## Step 1: analysis
+
+| File | Goes in the repository at | What it does |
 |---|---|---|
-| **Essentia** | 7 yes/no moods (happy, sad, aggressive, relaxed, party, acoustic, electronic) and 56 mood/theme tags (calm, dark, dreamy, …), each scored 0–1 | Analyses each song's 30-second Deezer preview |
-| **ReccoBeats** | Valence (how positive), energy, danceability, acousticness, instrumentalness, each 0–1 | Looked up by Spotify ID |
-| **Last.fm** | Tags that listeners gave the song (or its artist, if the song has fewer than 2) | Looked up by artist and title |
+| `tone_scores.R` | `tones/` | Picks the songs without scores (from the saved playlist copies in `state/`), then saves the new scores and writes the Excel overview. |
+| `essentia_scores.py` | `tones/` | Finds each song's preview on Deezer (by ISRC, then by search) and scores it with Essentia. |
+| `tones-analysis.yml` | `.github/workflows/` | The workflow "Tone playlists: analysis". Started by hand. |
 
-## How it works
+**How to run it:** Actions tab, "Tone playlists: analysis", then "Run workflow". Each run does up to 2,500 songs and at most about 5 hours. Run it again until the overview says nothing is left (about 4–5 runs for ~10,300 songs; *estimate*, the first run's log shows the real speed). It needs no Spotify requests, so any day is fine, and it doesn't hold up the daily run. Later runs only do songs added since.
 
-1. **R:** reads your test playlist from Spotify, using only 2–3 requests.
-2. **R:** picks 20 random songs from Everything everything for comparison. This is free, using the saved copies, and the same 20 songs are picked every run.
-3. **R:** finds each song's preview on Deezer.
-4. **Python:** Essentia analyses the previews. Essentia only exists for Python, so this one step is in Python. It runs on GitHub, so you don't need to install anything.
-5. **R:** gets the ReccoBeats measures and Last.fm tags, then scores every measure.
+**What it saves:**
+- `tones/state/scores.csv`: one row per song, with its scores.
+- `tones/state/no_preview.csv`: songs Deezer had no preview for. They're tried again after 180 days.
+- `tones/categories_overview.xlsx`: open this in Excel. It has three sheets:
+  - **progress:** songs analysed, still to do, and songs without a preview.
+  - **categories:** every mood category, with the median score, the score needed for the top 25 %, 15 % and 5 %, and the 5 highest-scoring songs.
+  - **scores:** every song with all its scores, to filter and sort.
 
-A good measure gives your test songs similar values, and values that differ from the random songs. The score for that is **separation**: how far apart the two groups are. Bigger means better, and above about 1 is clear.
+## The categories
 
-## Results
+- **7 main moods:** happy, sad, aggressive, relaxed, party, acoustic, electronic.
+- **56 mood/theme tags:** action, adventure, advertising, background, ballad, calm, children, christmas, commercial, cool, corporate, dark, deep, documentary, drama, dramatic, dream, emotional, energetic, epic, fast, film, fun, funny, game, groovy, happy, heavy, holiday, hopeful, inspiring, love, meditative, melancholic, melodic, motivational, movie, nature, party, positive, powerful, relaxing, retro, romantic, sad, sexy, slow, soft, soundscape, space, sport, summer, trailer, travel, upbeat, uplifting.
 
-The results are saved in `moods/results/` in the repository, and the best 5 measures per system are also printed at the end of the log.
-- `mood_summary.csv`: one row per measure, best separation first. Columns:
-  - `test_mean` and `random_mean`: the average for each group.
-  - `separation`
-  - `test_spread`: how consistent your songs are; smaller is better.
-  - `coverage`: the share of your songs the system had data for.
-- `mood_songs.csv`: one row per song, with every value from every system. Open it in Excel and filter by `group` (test or random).
+Each is a score from 0 to 1 per song. Some tags are about use (film, game) rather than mood, but they can still be used.
 
-## Setup (once, in the new-realeases-playlist repository)
+## Step 2: building playlists (planned, not built)
 
-1. Check that the `LASTFM_API_KEY` secret is there. It's the same one the Christmas playlists use.
-2. Click **Add file**, then **Create new file**, and add each of these:
-   - `moods/mood_check.R`, pasting [mood_check.R](mood_check.R)
-   - `moods/essentia_moods.py`, pasting [essentia_moods.py](essentia_moods.py)
-   - `.github/workflows/mood-check.yml`, pasting [mood-check.yml](mood-check.yml)
+You'll fill in an Excel sheet with one row per playlist. Each run builds only the rows marked **build = yes**.
 
-## Running it
+| Column | Meaning |
+|---|---|
+| build | yes / no |
+| playlist name | e.g. "Calm" |
+| type | *mood rule* (a mood we define from the categories, e.g. "relaxed high, aggressive low") or *like playlist* (the songs whose mood profile is closest to one of your playlists) |
+| rule or reference playlist | the rule, or the name of your playlist |
+| how many | a percentage of your library ("15%") or a number of songs ("300", the best matches) |
 
-Go to **Actions**, then **Mood checker**, then **Run workflow**. It takes about 5–10 minutes, mostly installing Essentia and downloading its models. It only uses 2–3 Spotify requests, so any afternoon works. Avoid Thursday and Friday mornings, when the weekly playlist is built.
+Agreed so far:
+- The playlist **title** includes the mood and the number or percentage, e.g. "Calm (top 15 %)".
+- The **description** says that it's based on the Everything everything playlists, which repository made it (new-realeases-playlist), and the rule used.
 
-If the Essentia step fails (it's marked as allowed to fail), the comparison still runs with ReccoBeats and Last.fm only. Send me the log and I'll fix it.
-
-The code has only been checked for syntax. It hasn't been run against the real services yet, so please send me the log if anything goes wrong.
+Design notes: [Tone playlists: workflow and decision matrix](https://claude.ai/artifact/G9DivW3fsdKqV72PmWaLQw).
