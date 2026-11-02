@@ -1,8 +1,8 @@
 # =============================================================================
-# essentia_scores.py  (tone playlists, step 1: analysis)
+# essentia_scores.py  (mood playlists, step 1: analysis)
 #
 # Gives each song in this run's batch Essentia's mood scores. Started by the
-# workflow between the two parts of tone_scores.R (Essentia only exists for
+# workflow between the two parts of mood_scores.R (Essentia only exists for
 # Python). Uses Deezer (free) and no Spotify requests at all.
 #
 #   1. Download Essentia's ready-made models (once per run, ~100 MB):
@@ -11,12 +11,12 @@
 #      - 7 yes/no mood models: happy, sad, aggressive, relaxed, party,
 #        acoustic, electronic (a score from 0 to 1 each).
 #      - "mtg_jamendo_moodtheme": scores for 56 mood/theme tags (0 to 1 each).
-#   2. For each song in tones/work/batch.csv: look up its 30-second preview on
+#   2. For each song in moods/work/scores/batch.csv: look up its 30-second preview on
 #      Deezer right before analysing it (preview links expire after a while),
 #      first by ISRC, then by searching artist and title.
 #   3. Analyse the preview and average the scores over the clip.
-#   4. Write tones/work/scores_new.csv (one row per analysed song) and
-#      tones/work/no_preview.csv (songs without a usable preview).
+#   4. Write moods/work/scores/scores_new.csv (one row per analysed song) and
+#      moods/work/scores/no_preview.csv (songs without a usable preview).
 # Stops starting new songs after TIME_LIMIT_MIN minutes, so the workflow has
 # time to save; the rest are done in the next run.
 # =============================================================================
@@ -38,10 +38,10 @@ MODELS_URL = "https://essentia.upf.edu/models/"
 EMBEDDING = "feature-extractors/discogs-effnet/discogs-effnet-bs64-1"
 MOODS = ["happy", "sad", "aggressive", "relaxed", "party", "acoustic", "electronic"]
 THEMES = "classification-heads/mtg_jamendo_moodtheme/mtg_jamendo_moodtheme-discogs-effnet-1"
-MODEL_DIR = "tones/work/models"
-BATCH_FILE = "tones/work/batch.csv"
-OUT_FILE = "tones/work/scores_new.csv"
-MISSING_FILE = "tones/work/no_preview.csv"
+MODEL_DIR = "moods/work/models"
+BATCH_FILE = "moods/work/scores/batch.csv"
+OUT_FILE = "moods/work/scores/scores_new.csv"
+MISSING_FILE = "moods/work/scores/no_preview.csv"
 TIME_LIMIT_MIN = 300     # stop starting new songs after 5 hours
 DEEZER_PAUSE = 0.15      # seconds between Deezer requests (limit: 50 per 5 s)
 START = time.time()

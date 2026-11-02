@@ -1,14 +1,14 @@
 # =============================================================================
-# GitHub Actions workflow: tone playlists, step 1 (analysis). Gives the songs
+# GitHub Actions workflow: mood playlists, step 1 (analysis). Gives the songs
 # in Everything everything Essentia mood scores, a batch per run, when you
-# start it by hand, and saves the results (tones/state/ and the Excel overview
-# tones/categories_overview.xlsx) in the repository.
-# Goes in .github/workflows/tones-analysis.yml in the new-releases repository.
+# start it by hand, and saves the results (moods/scores/ and the Excel overview
+# moods/mood_categories.xlsx) in the repository.
+# Goes in .github/workflows/mood-scores.yml in the new-releases repository.
 # Uses no Spotify requests (only the saved playlist copies and Deezer), so it
 # can run on any day. A run can take up to about 5 hours.
 # =============================================================================
 
-name: "Tone playlists: analysis"
+name: "Mood playlists: analysis"
 
 # Only started by hand, with the "Run workflow" button.
 on:
@@ -19,10 +19,11 @@ permissions:
   contents: write
 
 # Its own queue: it uses no Spotify requests, so it doesn't need to wait for
-# the daily run (and must not hold the daily run up for hours). Its files are
-# all in tones/, so its commits don't clash with the daily run's.
+# the daily run (and must not hold the daily run up for hours). It only
+# commits moods/scores/ and moods/mood_categories.xlsx, so its commits
+# don't clash with the daily run's (which commits state/).
 concurrency:
-  group: tones-analysis
+  group: mood-scores
   cancel-in-progress: false
 
 jobs:
@@ -31,7 +32,7 @@ jobs:
     timeout-minutes: 340
     steps:
       # Copy the repository (the scripts, the saved playlist copies in state/
-      # and the scores saved so far in tones/state/).
+      # and the scores saved so far in moods/scores/).
       - uses: actions/checkout@v5
 
       # Install R and the R packages (cached for later runs).
@@ -53,17 +54,17 @@ jobs:
 
       # Part 1 (R): pick this run's batch of songs without scores.
       - name: Pick songs
-        run: Rscript tones/tone_scores.R prepare
+        run: Rscript moods/mood_scores.R prepare
 
       # Part 2 (Python): find the previews on Deezer and analyse them.
       - name: Essentia analysis
-        run: python tones/essentia_scores.py
+        run: python moods/essentia_scores.py
 
       # Part 3 (R): save the scores and write the Excel overview. Runs even if
       # the analysis stopped early, so nothing that was done is lost.
       - name: Save scores and overview
         if: always()
-        run: Rscript tones/tone_scores.R save
+        run: Rscript moods/mood_scores.R save
 
       # Commit the results. "git pull --rebase" picks up any commit the daily
       # workflow made in the meantime.
@@ -72,8 +73,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
-          git add tones/state
-          [ -f tones/categories_overview.xlsx ] && git add tones/categories_overview.xlsx
-          git diff --cached --quiet || git commit -m "Tone playlists: analysis results"
+          [ -d moods/scores ] && git add moods/scores
+          [ -f moods/mood_categories.xlsx ] && git add moods/mood_categories.xlsx
+          git diff --cached --quiet || git commit -m "Mood playlists: analysis results"
           git pull --rebase
           git push

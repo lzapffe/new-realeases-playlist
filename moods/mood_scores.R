@@ -1,22 +1,22 @@
 # =============================================================================
-# tone_scores.R  (tone playlists, step 1: analysis)
+# mood_scores.R  (mood playlists, step 1: analysis)
 #
 # Gives every song in Everything everything Part 1/2 Essentia's mood scores,
 # a batch per run, and writes an Excel overview of the mood categories.
 # Uses no Spotify requests: the songs come from the new-releases script's
 # saved playlist copies (state/playlist_<id>.csv), the previews from Deezer.
 #
-# Run by the workflow "Tone playlists: analysis" in two parts, with the
+# Run by the workflow "Mood playlists: analysis" in two parts, with the
 # Python script essentia_scores.py in between:
-#   Rscript tones/tone_scores.R prepare
+#   Rscript moods/mood_scores.R prepare
 #     - lists the songs that have no scores yet and writes the next batch
-#       (BATCH_SIZE songs) to tones/work/batch.csv
-#   python tones/essentia_scores.py
+#       (BATCH_SIZE songs) to moods/work/scores/batch.csv
+#   python moods/essentia_scores.py
 #     - finds each preview on Deezer and analyses it with Essentia
-#   Rscript tones/tone_scores.R save
-#     - adds the new scores to tones/state/scores.csv, notes songs without a
-#       preview in tones/state/no_preview.csv, and writes the Excel overview
-#       tones/categories_overview.xlsx
+#   Rscript moods/mood_scores.R save
+#     - adds the new scores to moods/scores/scores.csv, notes songs without a
+#       preview in moods/scores/no_preview.csv, and writes the Excel overview
+#       moods/mood_categories.xlsx
 # Run it again until the overview's "progress" sheet says nothing is left.
 # Later runs only analyse songs added to Everything everything since.
 # =============================================================================
@@ -33,9 +33,9 @@ suppressPackageStartupMessages({
 MAIN_PLAYLISTS <- c("Everything everything - Part 1", "Everything everything - Part 2")
 BATCH_SIZE     <- 2500   # songs per run (the Python step also stops after 5 hours)
 RETRY_DAYS     <- 180    # songs without a preview are tried again after this
-STATE_DIR      <- "tones/state"
-WORK_DIR       <- "tones/work"
-OVERVIEW_FILE  <- "tones/categories_overview.xlsx"
+STATE_DIR      <- "moods/scores"
+WORK_DIR       <- "moods/work/scores"
+OVERVIEW_FILE  <- "moods/mood_categories.xlsx"
 
 STEP <- commandArgs(trailingOnly = TRUE)[1]
 if (!STEP %in% c("prepare", "save")) stop("Run with 'prepare' or 'save'.", call. = FALSE)
