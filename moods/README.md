@@ -9,7 +9,7 @@ This folder holds two things: the **mood playlists** project (the main one, belo
 It has two steps:
 
 1. **Analysis (built 2 November 2026):** every song gets mood scores from Essentia, a free tool that listens to the song's 30-second Deezer preview. Uses **no Spotify requests**.
-2. **Build playlists (not built yet):** you describe a playlist in an Excel sheet and the script creates it on Spotify. This step uses Spotify requests (about 1 per 100 songs), so it waits until there is room after the Christmas runs.
+2. **Build playlists (built 5 November 2026):** you describe a playlist in an Excel sheet and the script creates it on Spotify. This step uses Spotify requests (about 1 per 100 songs).
 
 Why Essentia: the mood checker (below, 28 October 2026) compared three systems on your "semi background songs" playlist. Essentia was the only one with data for every song and separated your songs best (relaxed, not aggressive). ReccoBeats had no data for 17 of 41 songs, and Last.fm only had genre tags, not moods.
 
@@ -38,21 +38,37 @@ Why Essentia: the mood checker (below, 28 October 2026) compared three systems o
 
 Each is a score from 0 to 1 per song. Some tags are about use (film, game) rather than mood, but they can still be used.
 
-### Step 2: building playlists (planned, not built)
+### Step 2: building playlists (built 5 November 2026)
 
-You'll fill in an Excel sheet with one row per playlist. Each run builds only the rows marked **build = yes**.
+| File | Goes in the repository at | What it does |
+|---|---|---|
+| `mood_playlists.xlsx` | `moods/` | **You edit this one.** One row per playlist; the "help" sheet explains the columns and lists the moods. |
+| `mood_playlists.R` | `moods/` | Picks the songs for each row marked build = yes and builds the playlist on Spotify. |
+| `mood-playlists.yml` | `.github/workflows/` | The workflow "Mood playlists: build". Started by hand. |
+
+**The Excel columns** (first sheet, "playlists"):
 
 | Column | Meaning |
 |---|---|
-| build | yes / no |
-| playlist name | e.g. "Calm" |
-| type | *mood rule* (a mood we define from the categories, e.g. "relaxed high, aggressive low") or *like playlist* (the songs whose mood profile is closest to one of your playlists) |
-| rule or reference playlist | the rule, or the name of your playlist |
-| how many | a percentage of your library ("15%") or a number of songs ("300", the best matches) |
+| build | `yes` = build or update it on the next run; `no` = skip it |
+| playlist name | e.g. "Calm". Keep it the same to update the same playlist later. |
+| type | `mood rule` or `like playlist` |
+| high | mood rule: the moods to rank by, separated by commas (`love, romantic`) |
+| low | mood rule, optional: moods a song must be below average on (`aggressive, party`) |
+| like playlist | like playlist: the exact name of one of your Spotify playlists |
+| how many | `15%` (of your library, grows with it) or `300` (the 300 best matches) |
 
-Agreed so far:
-- The playlist **title** includes the mood and the number or percentage, e.g. "Calm (top 15 %)".
-- The **description** says that it's based on the Everything everything playlists, which repository made it (new-realeases-playlist), and the rule used.
+**How songs are picked:**
+- Every score is turned into a percentile (0 = lowest in your library, 1 = highest), so main moods and small tags can be mixed fairly. A main mood wins over a tag with the same name (`happy` = the main mood).
+- *Mood rule:* songs below the middle on every "low" mood, ranked by the average of their "high" moods.
+- *Like playlist:* the script reads your playlist, finds its songs among the scored ones (by Spotify ID or ISRC) and ranks the other songs by how close their mood profile (all 63 categories) is to that playlist's average. The playlist's own songs are left out, and it needs at least 5 scored songs. Only songs in Everything everything have scores.
+- Only songs still in Everything everything are used.
+
+**On Spotify:** the title is the name plus the size, e.g. "Calm (top 15 %)" or "Love songs (300 songs)". The description says it's based on the Everything everything playlists, gives the rule, and names this repository. Playlists are private (`PLAYLIST_PUBLIC`). Running a row again **replaces** the songs in the playlist it made before; if you've deleted that playlist, a new one is made.
+
+**How to run it:** fill in the Excel file, save, close Excel, commit and push. Then Actions tab, "Mood playlists: build", "Run workflow". It uses about 1 Spotify request per 100 songs plus a few per playlist: a 15 % playlist (about 1,500 songs) costs about 19, a 300-song one about 6. At most 100 per run (`MAX_SPOTIFY_REQUESTS`); a row that doesn't fit waits for the next run. Pick a day with room (see the request log).
+
+**What it saves** (written by the workflow; don't edit): `moods/playlists_made.csv` (each playlist's Spotify ID, title, rule, size, date) and `moods/playlist_songs.csv` (the songs each playlist got, best match first).
 
 Design notes: [Mood playlists: workflow and decision matrix](https://claude.ai/artifact/G9DivW3fsdKqV72PmWaLQw).
 

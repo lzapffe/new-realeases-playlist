@@ -1,0 +1,67 @@
+# =============================================================================
+# GitHub Actions workflow: mood playlists, step 2 (build). Builds the playlists
+# marked build = yes in moods/mood_playlists.xlsx on Spotify, when you start it
+# by hand, and saves what it made (moods/playlists_made.csv and
+# moods/playlist_songs.csv) plus the Spotify request log in the repository.
+# Goes in .github/workflows/mood-playlists.yml in the new-releases repository.
+# Uses Spotify requests (at most 100 per run), so start it on a day with room.
+# =============================================================================
+
+name: "Mood playlists: build"
+
+# Only started by hand, with the "Run workflow" button.
+on:
+  workflow_dispatch:
+
+# "contents: write" lets the last step commit what was made.
+permissions:
+  contents: write
+
+# Shares its queue with the daily new-releases workflow, so the two never use
+# Spotify at the same time and their commits never clash.
+concurrency:
+  group: spotify-new-releases
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Copy the repository (the scores, your Excel choices, the playlist copies).
+      - uses: actions/checkout@v5
+
+      # Install R and the R packages (cached for later runs).
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::httr2
+            any::dplyr
+            any::purrr
+            any::tibble
+            any::readxl
+
+      # Build the playlists, with the same Spotify secrets as the daily run.
+      - name: Build playlists
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+          SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
+        run: Rscript moods/mood_playlists.R
+
+      # Save what was made (never your Excel file). "git pull --rebase" picks
+      # up any commit the daily workflow made in the meantime.
+      - name: Save results
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
+          [ -f moods/playlists_made.csv ] && git add moods/playlists_made.csv
+          [ -f moods/playlist_songs.csv ] && git add moods/playlist_songs.csv
+          [ -f state/spotify_request_log.csv ] && git add state/spotify_request_log.csv
+          git diff --cached --quiet || git commit -m "Mood playlists: built"
+          git pull --rebase
+          git push
