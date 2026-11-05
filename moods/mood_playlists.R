@@ -127,7 +127,7 @@ sp_ok <- function(resp) {
   if (resp_status(resp) >= 400) {
     stop("Spotify error ", resp_status(resp), ": ", resp_body_string(resp), call. = FALSE)
   }
-  if (length(resp_body_raw(resp)) == 0) return(list())
+  if (!resp_has_body(resp)) return(list())   # e.g. "details changed" replies have no body
   resp_body_json(resp)
 }
 
