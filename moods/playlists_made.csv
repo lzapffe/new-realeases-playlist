@@ -1,0 +1,6 @@
+"name","playlist_id","title","rule","n_songs","made_on"
+"Happy","45ub61L2oUsJSVAwQXymdv","Happy (top 15 %)","high: happy; low: sad","1508","2026-11-05"
+"Sad","0YY5wXEc005JT7GRoym8mz","Sad (top 15 %)","high: sad; low: happy","1508","2026-11-05"
+"Calm","474xqwaZcOo7InyXw7bX5H","Calm (top 15 %)","high: relaxed; low: aggressive, party","1508","2026-11-05"
+"Love songs","3wTn2hnPA8c6nK5eCQPEdp","Love songs (300 songs)","high: love, romantic; low: aggressive","300","2026-11-05"
+"More like semi-background","2qmM6Kzq79pWmKoRtw5aIP","More like semi-background (300 songs)","closest in mood to 'Semi-background songs'","300","2026-11-05"
