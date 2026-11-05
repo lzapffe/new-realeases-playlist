@@ -217,17 +217,25 @@ column_for <- function(name) {
   NA_character_
 }
 
+# as_size(): the "how many" cell as text: "15%" for a percentage, "300" for a
+# number of songs. Excel stores a cell typed as 15% as the number 0.15, so a
+# number between 0 and 1 is read as a percentage too.
+as_size <- function(x) {
+  x <- gsub("\\s+", "", coalesce(x, ""))
+  v <- suppressWarnings(as.numeric(x))
+  if (!is.na(v) && v > 0 && v <= 1) return(paste0(round(v * 100, 2), "%"))
+  x
+}
+
 # how_many(): "15%" -> 15 % of the scored songs; "300" -> 300 songs.
 how_many <- function(x) {
-  x <- trimws(x %||% "")
-  if (grepl("%$", x)) return(round(nrow(pct) * as.numeric(sub("\\s*%$", "", x)) / 100))
+  if (grepl("%$", x)) return(round(nrow(pct) * as.numeric(sub("%$", "", x)) / 100))
   suppressWarnings(as.integer(x))
 }
 
 # size_label(): the part of the title that says how big the playlist is.
 size_label <- function(x) {
-  x <- trimws(x)
-  if (grepl("%$", x)) sprintf("top %s %%", sub("\\s*%$", "", x)) else sprintf("%s songs", x)
+  if (grepl("%$", x)) sprintf("top %s %%", sub("%$", "", x)) else sprintf("%s songs", x)
 }
 
 # What earlier runs made (free). save_all() writes both files; it is also
@@ -257,7 +265,8 @@ for (i in seq_len(nrow(todo))) {
   row  <- todo[i, ]
   name <- trimws(row$`playlist name`)
   type <- tolower(trimws(coalesce(row$type, "")))
-  n    <- how_many(row$`how many`)
+  size <- as_size(row$`how many`)
+  n    <- suppressWarnings(how_many(size))
   if (is.na(n) || n < 1) { message("  ", name, ": 'how many' must be like 15% or 300; skipped."); next }
 
   if (type == "mood rule") {
@@ -320,9 +329,9 @@ for (i in seq_len(nrow(todo))) {
   }
 
   # Title, description (Spotify allows 300 characters, no line breaks).
-  title <- sprintf("%s (%s)", name, size_label(row$`how many`))
+  title <- sprintf("%s (%s)", name, size_label(size))
   desc  <- substr(sprintf("Mood playlist based on the Everything everything playlists. Rule: %s; %s. Made by the %s repository.",
-                          rule, size_label(row$`how many`), REPO_NAME), 1, 300)
+                          rule, size_label(size), REPO_NAME), 1, 300)
 
   # The playlist this row made before, if you haven't deleted it: update it.
   # Otherwise make a new one.
