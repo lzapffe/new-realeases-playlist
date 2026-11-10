@@ -127,7 +127,7 @@
 "Blues","adeste fideles|nat king cole","spotify:track:5BP07D2BN5mYxm4OU6Ra8B","Adeste Fideles","Nat King Cole","artist genre","2026-11-03"
 "Blues","silent night|nat king cole","spotify:track:4iTfml41SOUBHXgMUHLUVV","Silent Night","Nat King Cole","artist genre","2026-11-03"
 "Blues","the christmas waltz|peggy lee","spotify:track:4DV9KToOaC0khx2MqOZstE","The Christmas Waltz","Peggy Lee","artist genre","2026-11-03"
-"R&B","o holy night|stacie orrico","spotify:track:6pqTlq7HsCyPfyabGnBQv6","O Holy Night","Stacie Orrico","combined tag",
+"R&B","o holy night|stacie orrico","spotify:track:6pqTlq7HsCyPfyabGnBQv6","O Holy Night","Stacie Orrico","combined tag","2026-11-10"
 "Blues","have yourself a merry little christmas|ella fitzgerald","spotify:track:1ta7346unwX9mJOqbSB9wD","Have Yourself a Merry Little Christmas","Ella Fitzgerald","artist genre","2026-11-03"
 "Celtic","greensleeves|kim robertson","spotify:track:5A9d9m8G4wRZCECsGkjqEf","Greensleeves","Kim Robertson","combined tag","2026-11-03"
 "Celtic","celtic christmas|michele mclaughlin","spotify:track:5ePJTluigCWepfLtd1Ogsg","Celtic Christmas","Michele McLaughlin","combined tag","2026-11-03"
@@ -304,6 +304,42 @@
 "Pop","reason for the season|chris hale","spotify:track:2SStrdsOEnM6D5jYlxFuca","Reason For The Season","Chris Hale","combined tag","2026-11-10"
 "Pop","sleigh ride|karmin","spotify:track:1WMDNvWXulWMG6YQK59yFY","Sleigh Ride","Karmin","combined tag","2026-11-10"
 "Pop","sleigh ride|juice newton","spotify:track:0JtMNIBul1UUQBhK6dOjeY","Sleigh Ride","Juice Newton","combined tag","2026-11-10"
-"R&B","little drummer boy|the jackson 5","spotify:track:7z5Kfrz0nH11IvraioXHwJ","Little Drummer Boy","The Jackson 5","combined tag",
-"R&B","merry christmas baby|charles brown","spotify:track:44nlugAWj5v56iRyGa4ieE","Merry Christmas, Baby","Charles Brown","combined tag",
-"R&B","white christmas|stacie orrico","spotify:track:5JMn2UWi5PumDp2Y1aHXi8","White Christmas","Stacie Orrico","combined tag",
+"R&B","little drummer boy|the jackson 5","spotify:track:7z5Kfrz0nH11IvraioXHwJ","Little Drummer Boy","The Jackson 5","combined tag","2026-11-10"
+"R&B","merry christmas baby|charles brown","spotify:track:44nlugAWj5v56iRyGa4ieE","Merry Christmas, Baby","Charles Brown","combined tag","2026-11-10"
+"R&B","white christmas|stacie orrico","spotify:track:5JMn2UWi5PumDp2Y1aHXi8","White Christmas","Stacie Orrico","combined tag","2026-11-10"
+"R&B","everything for christmas|the temptations","spotify:track:4em7JyRCIZD8yeMCaV41gV","Everything For Christmas","The Temptations","combined tag","2026-11-10"
+"R&B","christmas baby please come home|mariah carey","spotify:track:3PIDciSFdrQxSQSihim3hN","Christmas (Baby Please Come Home)","Mariah Carey","artist genre","2026-11-10"
+"R&B","o holy night|mariah carey","spotify:track:3B7FO3kJ5kv3mX7yiaB7sT","O Holy Night","Mariah Carey","artist genre","2026-11-10"
+"R&B","buy me presents|sabrina carpenter","spotify:track:3Cz6MZdwncB4qasyRPen4S","buy me presents","Sabrina Carpenter","artist genre","2026-11-10"
+"R&B","santa claus is comin to town|mariah carey","spotify:track:1f2lkuLldqRzvaFjJdjGXX","Santa Claus Is Comin' to Town","Mariah Carey","artist genre","2026-11-10"
+"R&B","santa baby|ariana grande","spotify:track:6YJdPrH3i2POzu7hdHIRrb","Santa Baby","Ariana Grande","artist genre","2026-11-10"
+"R&B","true love|ariana grande","spotify:track:4NRF1B6kriUmtXflcVmed7","True Love","Ariana Grande","artist genre","2026-11-10"
+"R&B","silent night|mariah carey","spotify:track:1sFWEpf1aPYN576LS1aa4Y","Silent Night","Mariah Carey","artist genre","2026-11-10"
+"R&B","joy to the world|mariah carey","spotify:track:2OggiWqL8exckT6kOrcDuA","Joy to the World","Mariah Carey","artist genre","2026-11-10"
+"R&B","8 days of christmas|destiny's child","spotify:track:2CZWUmcG9swKChEPBllPra","8 Days of Christmas","Destiny's Child","artist genre","2026-11-10"
+"R&B","all i want for christmas is you superfestive duet with mariah carey|justin bieber","spotify:track:1IUtgwxLYzDVd41EgbKUjX","All I Want for Christmas Is You (SuperFestive!) Duet with Mariah Carey","Justin Bieber","artist genre","2026-11-10"
+"R&B","santa doesnt know you like i do|sabrina carpenter","spotify:track:5mi0HQrZMhRb2MRdFiUP6v","santa doesn’t know you like i do","Sabrina Carpenter","artist genre","2026-11-10"
+"R&B","oh santa|mariah carey","spotify:track:2VkuxjlbnbaBiWYpdBGVol","Oh Santa!","Mariah Carey","artist genre","2026-11-10"
+"R&B","santa claus is coming to town|justin bieber","spotify:track:1JJUsWVriEtXr8lHSQXTIy","Santa Claus Is Coming to Town","Justin Bieber","artist genre","2026-11-10"
+"R&B","not just on christmas|ariana grande","spotify:track:6JJ4W13A4Q5yeK4g6OROmg","Not Just on Christmas","Ariana Grande","artist genre","2026-11-10"
+"R&B","miss you most at christmas time|mariah carey","spotify:track:1uQRAiaDstq15Vd52ryoI7","Miss You Most (At Christmas Time)","Mariah Carey","artist genre","2026-11-10"
+"R&B","snow in california|ariana grande","spotify:track:6Uc4EHr3ktYmLfLDY7LifJ","Snow in California","Ariana Grande","artist genre","2026-11-10"
+"R&B","a nonsense christmas|sabrina carpenter","spotify:track:73ye7F9Ub51dQ3CrnCHFhr","A Nonsense Christmas","Sabrina Carpenter","artist genre","2026-11-10"
+"R&B","jesus oh what a wonderful child|mariah carey","spotify:track:7zAoR3Od28Xj97fTLgnaGi","Jesus Oh What a Wonderful Child","Mariah Carey","artist genre","2026-11-10"
+"R&B","christmas eve|justin bieber","spotify:track:6Zztw1ERHqXAngHE8PfO6N","Christmas Eve","Justin Bieber","artist genre","2026-11-10"
+"R&B","have yourself a merry little christmas|christina aguilera","spotify:track:0iV9yfj1knFNOSEiuTHZwl","Have Yourself a Merry Little Christmas","Christina Aguilera","artist genre","2026-11-10"
+"R&B","this christmas|christina aguilera","spotify:track:4gYjZMgbcZHekwnpim3Z0p","This Christmas","Christina Aguilera","artist genre","2026-11-10"
+"R&B","jesus born on this day|mariah carey","spotify:track:6AoXseJVabZFmKEYjQCXPS","Jesus Born on This Day","Mariah Carey","artist genre","2026-11-10"
+"R&B","only thing i ever get for christmas|justin bieber","spotify:track:4BY6dDtUBweniXJXnd13Ek","Only Thing I Ever Get for Christmas","Justin Bieber","artist genre","2026-11-10"
+"R&B","december|ariana grande","spotify:track:7zrhy9OhtcO7MdIvbbJiOa","December","Ariana Grande","artist genre","2026-11-10"
+"R&B","have yourself a merry little christmas|luther vandross","spotify:track:2dN3rWwIFZBOio0eT7VTya","Have Yourself a Merry Little Christmas","Luther Vandross","artist genre","2026-11-10"
+"R&B","christmas in harlem|kanye west","spotify:track:00HMEiBMDkbNCHLJL6zqVk","Christmas In Harlem","Kanye West","artist genre","2026-11-10"
+"R&B","winter things|ariana grande","spotify:track:1jhljxXlHw8K9rezXKrnow","Winter Things","Ariana Grande","artist genre","2026-11-10"
+"R&B","when christmas comes|mariah carey","spotify:track:4riYG1BJEi4z998vce8MBC","When Christmas Comes","Mariah Carey","artist genre","2026-11-10"
+"R&B","wit it this christmas|ariana grande","spotify:track:2ZFX853E9oi99D6WaPYUg8","Wit It This Christmas","Ariana Grande","artist genre","2026-11-10"
+"R&B","this christmas|chris brown","spotify:track:3W6PmtGTyLwWBWUYplSWHT","This Christmas","Chris Brown","artist genre","2026-11-10"
+"Rock","ho ho hey a way for santas sleigh|emery","spotify:track:7h46VCC7GTWl8KwsmMTMoh","(Ho Ho Hey) A Way For Santa's Sleigh","Emery","combined tag",
+"Rock","christmas is the time to say i love you|billy squier","spotify:track:2NSFg6KZjXOXLOZ3ayZFbV","Christmas Is The Time To Say I Love You","Billy Squier","combined tag",
+"Rock","deck the halls|the ventures","spotify:track:3sjT2UJ3zT7g7Gg7gT5SZw","Deck the Halls","The Ventures","combined tag",
+"Rock","santa claus is coming to town|bruce springsteen","spotify:track:3zwjeUjzAm3rwojZNj05P6","Santa Claus Is Coming To Town","Bruce Springsteen","combined tag",
+"Rock","last christmas|hawk nelson","spotify:track:1UHn9u2b4gKt9aXTYzIHgT","Last Christmas","Hawk Nelson","combined tag",
