@@ -51,7 +51,7 @@ Each is a score from 0 to 1 per song. Some tags are about use (film, game) rathe
 | Column | Meaning |
 |---|---|
 | build | `yes` = build or update it on the next run; `no` = skip it |
-| playlist name | e.g. "Calm". Keep it the same to update the same playlist later. |
+| playlist name | e.g. "Calm". Name, rule and size together identify the playlist. |
 | type | `mood rule` or `like playlist` |
 | high | mood rule: the moods to rank by, separated by commas (`love, romantic`) |
 | low | mood rule, optional: moods a song must be below average on (`aggressive, party`) |
@@ -64,11 +64,14 @@ Each is a score from 0 to 1 per song. Some tags are about use (film, game) rathe
 - *Like playlist:* the script reads your playlist, finds its songs among the scored ones (by Spotify ID or ISRC) and ranks the other songs by how close their mood profile (all 63 categories) is to that playlist's average. The playlist's own songs are left out, and it needs at least 5 scored songs. Only songs in Everything everything have scores.
 - Only songs still in Everything everything are used.
 
-**On Spotify:** the title is the name plus the size, e.g. "Calm (top 15 %)" or "Love songs (300 songs)". The description says it's based on the Everything everything playlists, gives the rule, and names this repository. Playlists are private (`PLAYLIST_PUBLIC`). Running a row again **replaces** the songs in the playlist it made before; if you've deleted that playlist, a new one is made.
+**On Spotify:** the title is the name plus the size, e.g. "Calm (top 15 %) - unchecked" or "Love songs (300 songs)". The description says it's based on the Everything everything playlists, gives the rule, and names this repository. Playlists are private (`PLAYLIST_PUBLIC`). **Each different choice gets its own playlist** (changed 7 November 2026): a row is identified by its name, rule and size together. Running exactly the same choice again **replaces** the songs in the playlist it made before (if you've deleted it, a new one is made). Changing the size or rule, e.g. 15% to 5%, makes a **new** playlist and leaves the old one alone. Playlists made before 7 November are never updated again. **New playlists end in " - unchecked"** (since 8 November 2026), e.g. "Calm (top 15 %) - unchecked". When you have looked one over and want to keep it as it is, remove " - unchecked" from its name in Spotify: the script never changes it again, and running the same choice makes a new "- unchecked" playlist instead. The script never deletes playlists.
 
 **How to run it:** fill in the Excel file, save, close Excel, commit and push. Then Actions tab, "Mood playlists: build", "Run workflow". It uses about 1 Spotify request per 100 songs plus a few per playlist: a 15 % playlist (about 1,500 songs) costs about 19, a 300-song one about 6. At most 100 per run (`MAX_SPOTIFY_REQUESTS`); a row that doesn't fit waits for the next run. Pick a day with room (see the request log).
 
-**What it saves** (written by the workflow; don't edit): `moods/playlists_made.csv` (each playlist's Spotify ID, title, rule, size, date) and `moods/playlist_songs.csv` (the songs each playlist got, best match first).
+**What it saves** (written by the workflow; don't edit):
+- `moods/playlists_made.csv`: each playlist's Spotify ID, title, rule, size, date and history file.
+- `moods/playlist_songs.csv`: the latest songs of each playlist, best match first.
+- `moods/playlist_history/` (since 10 November 2026): **one dated CSV per build, never overwritten**, e.g. `2026-11-10_Calm-top-15pct.csv` (a second build the same day adds the time). Each row is a song (rank, title, artist, Spotify ID, match), with the playlist's title and rule. This is the record of what each version contained, even after the playlist on Spotify has been changed or deleted. Playlists made before 10 November get a file on the next run, dated when they were made.
 
 Design notes: [Mood playlists: workflow and decision matrix](https://claude.ai/artifact/G9DivW3fsdKqV72PmWaLQw).
 

@@ -12,8 +12,14 @@
 #   - like playlist: songs whose mood profile is closest to one of your own
 #                   playlists (for example "Semi-background songs").
 #
-# Running a row again replaces the songs in the playlist it made before (it
-# doesn't make a second one), unless you have deleted that playlist.
+# Each different choice gets its own playlist: a row is identified by its
+# name, rule and size together. Running exactly the same choice again
+# replaces the songs in the playlist it made before (unless you deleted it);
+# changing the size or the rule (e.g. 15% -> 5%) makes a new playlist and
+# leaves the old one as it is.
+# New playlists end in " - unchecked". Remove that from the name on Spotify
+# once you have looked it over: a checked playlist is never changed again
+# (running the same choice then makes a new "- unchecked" one).
 #
 # Spotify requests: about 1 per 100 songs, plus 2 per playlist and a few to
 # read your list of playlists and any "like" playlists. The run stops before
@@ -42,12 +48,14 @@ suppressPackageStartupMessages({
 CHOICES_FILE         <- "moods/mood_playlists.xlsx"   # you edit this one
 SCORES_FILE          <- "moods/scores/scores.csv"     # from step 1
 MADE_FILE            <- "moods/playlists_made.csv"    # the playlists this script made
-SONGS_FILE           <- "moods/playlist_songs.csv"    # which songs each playlist got
+SONGS_FILE           <- "moods/playlist_songs.csv"    # the latest songs of each playlist
+HISTORY_DIR          <- "moods/playlist_history"      # one dated file per build, never overwritten
 MAIN_PLAYLISTS       <- c("Everything everything - Part 1", "Everything everything - Part 2")
 MAX_SPOTIFY_REQUESTS <- 100     # per run; the run stops before this
 PLAYLIST_PUBLIC      <- FALSE   # FALSE = private playlists
 MIN_LIKE_SONGS       <- 5       # a "like" playlist needs at least this many scored songs
 REPO_NAME            <- "new-realeases-playlist"
+UNCHECKED_SUFFIX     <- " - unchecked"   # remove it from a name on Spotify once you have checked the playlist
 SP                   <- "https://api.spotify.com/v1"
 
 # Log this run's Spotify requests in state/spotify_request_log.csv when it
@@ -241,21 +249,69 @@ size_label <- function(x) {
 # What earlier runs made (free). save_all() writes both files; it is also
 # called if Spotify blocks the run, so nothing made is lost.
 MADE  <- read_csv_text(MADE_FILE) %||%
-  tibble(name = character(), playlist_id = character(), title = character(),
+  tibble(choice = character(), name = character(), playlist_id = character(), title = character(),
          rule = character(), n_songs = character(), made_on = character())
 SONGS <- read_csv_text(SONGS_FILE) %||%
-  tibble(name = character(), rank = character(), spotify_id = character(),
+  tibble(choice = character(), name = character(), rank = character(), spotify_id = character(),
          title = character(), artist = character(), match = character())
+# Playlists made before 7 November 2026 have no "choice" yet; they are kept
+# as they are and never updated by a later run.
+if (!"choice" %in% names(MADE))  MADE$choice  <- NA_character_
+if (!"choice" %in% names(SONGS)) SONGS$choice <- NA_character_
+if (!"history_file" %in% names(MADE)) MADE$history_file <- NA_character_
 save_all <- function() {
   write_csv_utf8(MADE, MADE_FILE)
   write_csv_utf8(SONGS, SONGS_FILE)
 }
+
+# write_history(): save one version of a playlist as its own CSV file in
+# moods/playlist_history/, named by date and title, e.g.
+# "2026-11-10_Calm-top-15pct.csv" (a second build the same day adds the time,
+# "..._1432.csv"). Existing files are never overwritten. One row per song,
+# with the playlist's title and rule repeated on every row.
+# Returns the file name.
+write_history <- function(built_on, title, rule, songs) {
+  dir.create(HISTORY_DIR, recursive = TRUE, showWarnings = FALSE)
+  slug <- sub(paste0(UNCHECKED_SUFFIX, "$"), "", title)
+  slug <- gsub("%", "pct", slug)
+  slug <- gsub("-+", "-", gsub("[^A-Za-z0-9]+", "-", slug))
+  slug <- gsub("^-|-$", "", slug)
+  file <- file.path(HISTORY_DIR, sprintf("%s_%s.csv", built_on, slug))
+  if (file.exists(file)) {
+    file <- file.path(HISTORY_DIR, sprintf("%s_%s_%s.csv", built_on, slug,
+                                           format(Sys.time(), "%H%M", tz = "Europe/Oslo")))
+  }
+  n <- 2
+  while (file.exists(file)) {   # extremely rare: same minute
+    file <- sub("(_[0-9]+)?\\.csv$", sprintf("_%d.csv", n), file); n <- n + 1
+  }
+  write_csv_utf8(tibble(built_on = built_on, playlist_title = title, rule = rule,
+                        rank = songs$rank, title = songs$title, artist = songs$artist,
+                        spotify_id = songs$spotify_id, match = songs$match),
+                 file)
+  basename(file)
+}
+
+# Playlists made before the history files existed (10 November 2026) get one
+# now, from their saved songs, dated when they were made. Free.
+for (k in which(is.na(MADE$history_file))) {
+  m  <- MADE[k, ]
+  sg <- SONGS |>
+    filter(if (is.na(m$choice)) is.na(.data$choice) & .data$name == m$name else .data$choice %in% m$choice) |>
+    arrange(as.integer(rank))
+  if (nrow(sg) == 0) next
+  MADE$history_file[k] <- write_history(m$made_on, m$title, m$rule, sg)
+  message("History file written for the earlier playlist '", m$title, "'.")
+}
+save_all()
 
 # ---- 2. Spotify: your playlists ----------------------------------------------
 message("== 2. Reading your list of playlists on Spotify")
 TOKEN <- get_access_token()
 my_playlists <- sp_all("/me/playlists")
 my_ids <- map_chr(my_playlists, function(p) p$id %||% NA_character_)
+# The playlists' current names on Spotify, to see which ones you have checked.
+my_names <- set_names(map_chr(my_playlists, function(p) p$name %||% ""), my_ids)
 message(length(my_playlists), " playlists found (", SPOTIFY_USED, " requests).")
 
 # ---- 3. Pick the songs and build each playlist --------------------------------
@@ -329,13 +385,23 @@ for (i in seq_len(nrow(todo))) {
   }
 
   # Title, description (Spotify allows 300 characters, no line breaks).
-  title <- sprintf("%s (%s)", name, size_label(size))
+  title <- sprintf("%s (%s)%s", name, size_label(size), UNCHECKED_SUFFIX)
   desc  <- substr(sprintf("Mood playlist based on the Everything everything playlists. Rule: %s; %s. Made by the %s repository.",
                           rule, size_label(size), REPO_NAME), 1, 300)
 
-  # The playlist this row made before, if you haven't deleted it: update it.
-  # Otherwise make a new one.
-  pid <- MADE$playlist_id[MADE$name == name][1]
+  # "choice" identifies this exact row: name, rule and size. The playlist made
+  # for the same choice before is updated only if it still exists AND its name
+  # on Spotify still ends in " - unchecked". If you have removed that ending
+  # (you checked it and want to keep it as it is), it is never touched again
+  # and a new "- unchecked" playlist is made instead. A new choice or a
+  # deleted playlist also gets a new playlist.
+  choice <- paste(name, rule, size_label(size), sep = " | ")
+  pid <- MADE$playlist_id[MADE$choice %in% choice][1]
+  if (!is.na(pid) && pid %in% my_ids && !endsWith(my_names[[pid]], UNCHECKED_SUFFIX)) {
+    message("  ", name, ": '", my_names[[pid]], "' is checked (no '", trimws(UNCHECKED_SUFFIX),
+            "' in its name), so it is kept as it is; making a new playlist.")
+    pid <- NA_character_
+  }
   if (!is.na(pid) && pid %in% my_ids) {
     sp_ok(sp(sprintf("/playlists/%s", pid), method = "PUT",
              body = list(name = title, description = desc, public = PLAYLIST_PUBLIC)))
@@ -346,14 +412,17 @@ for (i in seq_len(nrow(todo))) {
   }
   set_songs(pid, paste0("spotify:track:", picks$spotify_id))
 
-  # Save what was made, replacing this row's earlier record.
-  MADE <- bind_rows(filter(MADE, name != !!name),
-                    tibble(name = name, playlist_id = pid, title = title, rule = rule,
+  # Save what was made, replacing this choice's earlier record.
+  MADE <- bind_rows(filter(MADE, is.na(.data$choice) | .data$choice != !!choice),
+                    tibble(choice = choice, name = name, playlist_id = pid, title = title, rule = rule,
                            n_songs = as.character(nrow(picks)), made_on = as.character(Sys.Date())))
-  SONGS <- bind_rows(filter(SONGS, name != !!name),
-                     tibble(name = name, rank = as.character(seq_len(nrow(picks))),
-                            spotify_id = picks$spotify_id, title = picks$title,
-                            artist = picks$artist, match = as.character(round(picks$match, 3))))
+  new_songs <- tibble(choice = choice, name = name, rank = as.character(seq_len(nrow(picks))),
+                      spotify_id = picks$spotify_id, title = picks$title,
+                      artist = picks$artist, match = as.character(round(picks$match, 3)))
+  SONGS <- bind_rows(filter(SONGS, is.na(.data$choice) | .data$choice != !!choice), new_songs)
+  # A dated copy of this version, kept even when the playlist changes later.
+  MADE$history_file[MADE$choice %in% choice] <-
+    write_history(as.character(Sys.Date()), title, rule, new_songs)
   save_all()
   message("  ", action, " '", title, "' with ", nrow(picks), " songs (", SPOTIFY_USED, " requests so far).")
 }

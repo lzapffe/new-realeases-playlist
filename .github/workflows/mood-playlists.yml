@@ -2,7 +2,8 @@
 # GitHub Actions workflow: mood playlists, step 2 (build). Builds the playlists
 # marked build = yes in moods/mood_playlists.xlsx on Spotify, when you start it
 # by hand, and saves what it made (moods/playlists_made.csv and
-# moods/playlist_songs.csv) plus the Spotify request log in the repository.
+# moods/playlist_songs.csv and the dated copies in moods/playlist_history/)
+# plus the Spotify request log in the repository.
 # Goes in .github/workflows/mood-playlists.yml in the new-releases repository.
 # Uses Spotify requests (at most 100 per run), so start it on a day with room.
 # =============================================================================
@@ -61,6 +62,7 @@ jobs:
           git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
           [ -f moods/playlists_made.csv ] && git add moods/playlists_made.csv
           [ -f moods/playlist_songs.csv ] && git add moods/playlist_songs.csv
+          [ -d moods/playlist_history ] && git add moods/playlist_history
           [ -f state/spotify_request_log.csv ] && git add state/spotify_request_log.csv
           git diff --cached --quiet || git commit -m "Mood playlists: built"
           git pull --rebase
