@@ -82,10 +82,9 @@ RELEASE_WINDOW_DAYS <- 14      # look for releases from the last N days (incl. t
 BUILD_DAY              <- 4         # Thursday: the playlist is created ("in progress")
 PUBLISH_DAY            <- 5         # Friday: the playlist is finished and renamed
 CATCH_UP_DAYS          <- c(6, 7)   # Sat/Sun: finish it then if Friday's run failed
-# PAUSED 2 Nov 2026 (Linn): the unmatched-artist check is switched off so the
-# Christmas and mood runs get Spotify requests. To switch it back on, use:
-# FALLBACK_DAYS        <- c(6, 7, 1, 2, 3) # Sat-Wed: check unmatched artists on Spotify
-FALLBACK_DAYS          <- integer(0) # no days: the unmatched-artist check is paused
+# Paused 2-17 Nov 2026 for the Christmas and mood runs; switched back on
+# 17 Nov 2026 (Linn). To pause it again, use: FALLBACK_DAYS <- integer(0)
+FALLBACK_DAYS          <- c(6, 7, 1, 2, 3) # Sat-Wed: check unmatched artists on Spotify
 FALLBACK_INTERVAL_DAYS <- 7         # check each unmatched artist at most once a week
 
 PLAYLIST_PUBLIC <- FALSE           # the weekly playlist is private
