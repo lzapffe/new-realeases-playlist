@@ -13,7 +13,9 @@
 #      are only used when there aren't enough solo songs.
 #   2. Look up each song's ISRC on Deezer. Deezer answers with the exact song
 #      and every artist on it, each with their own Deezer ID.
-#      - Solo song on Spotify and one artist on Deezer: that artist.
+#      - Solo song on Spotify and one artist on Deezer: that artist, but only
+#        if the names are clearly the same apart from spelling (see
+#        names_alike() below). A completely different name gives nothing.
 #      - Otherwise: only the Deezer artist whose name is EXACTLY the same
 #        (ignoring upper/lower case). No exact name, or more than one: nothing.
 #   3. Accept the Deezer artist only if:
@@ -114,6 +116,33 @@ dz_get <- function(path) {
   NULL
 }
 
+# simplify_name(): turn a name into plain words so spelling differences don't
+# count: lower case, accents removed (ü -> u, ß -> ss), "&" -> "and", "'s"
+# dropped (Children's -> children), "the" dropped, other punctuation removed.
+simplify_name <- function(x) {
+  x <- tolower(x %||% "")
+  y <- iconv(x, from = "UTF-8", to = "ASCII//TRANSLIT")
+  if (!is.na(y)) x <- tolower(y)
+  x <- gsub("&", " and ", x, fixed = TRUE)
+  x <- gsub("['\u2019`]s\\b", "", x, perl = TRUE)
+  x <- gsub("[^a-z0-9 ]", "", x)
+  words <- strsplit(trimws(x), " +")[[1]]
+  words[words != "the" & nzchar(words)]
+}
+
+# names_alike(): TRUE when two artist names are clearly the same apart from
+# spelling: the same words, or all the words of one name are whole words of
+# the other (e.g. "Samu Haber" and "Samu Aleksi Haber"). "Lex" and
+# "Alex Bordonaro" are NOT alike, because "lex" isn't a whole word there.
+names_alike <- function(a, b) {
+  if (is.null(a) || is.null(b) || is.na(a) || is.na(b)) return(FALSE)   # no name to compare
+  if (norm(a) == norm(b)) return(TRUE)   # e.g. names in other alphabets
+  wa <- simplify_name(a)
+  wb <- simplify_name(b)
+  if (length(wa) == 0 || length(wb) == 0) return(FALSE)
+  all(wa %in% wb) || all(wb %in% wa)
+}
+
 # deezer_artist_for_song(): look up one song by ISRC on Deezer and return the
 # Deezer artist (id and name) that is your artist, or a reason why not.
 deezer_artist_for_song <- function(isrc, name, solo) {
@@ -122,9 +151,15 @@ deezer_artist_for_song <- function(isrc, name, solo) {
     return(list(id = NA_character_, dz_name = NA_character_, why = "song not on Deezer"))
   }
   people <- tr$contributors %||% list(tr$artist)
+  # Solo song with one artist on Deezer: accept that artist only if the name
+  # is alike; otherwise this song gives nothing (and the note says why).
   if (solo && length(people) == 1) {
-    return(list(id = id_chr(people[[1]]$id), dz_name = people[[1]]$name %||% NA_character_,
-                why = "solo song"))
+    dz_name <- people[[1]]$name %||% NA_character_
+    if (names_alike(name, dz_name)) {
+      return(list(id = id_chr(people[[1]]$id), dz_name = dz_name, why = "solo song"))
+    }
+    return(list(id = NA_character_, dz_name = NA_character_,
+                why = paste0("solo song, different name on Deezer (", dz_name, ")")))
   }
   same <- keep(people, function(p) norm(p$name %||% "") == norm(name))
   ids  <- unique(map_chr(same, function(p) id_chr(p$id)))

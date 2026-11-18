@@ -6,7 +6,7 @@ This script finds the right Deezer artist through your own songs, using **no Spo
 
 1. For each unsure artist, it takes your songs by them from the saved playlist copies in `state/`, with each song's ISRC (the song's international recording code). **Songs where the artist is alone come first.** Songs with other artists are only used when there aren't enough solo songs.
 2. It looks up each ISRC on Deezer, which gives the exact song and every artist on it.
-   - A solo song on Spotify that has one artist on Deezer gives that artist.
+   - A solo song on Spotify that has one artist on Deezer gives that artist, but only if the names are clearly the same apart from spelling: accents, "&"/"and", "The", "'s", punctuation, or all the words of one name being whole words of the other ("Samu Haber" and "Samu Aleksi Haber"). A completely different name ("GUNNAR" and "Lil GG") gives nothing, and the notes column says so.
    - Otherwise it only takes the Deezer artist with exactly the same name. No exact name, or two with the same name, gives nothing.
 3. A match is accepted only when **two songs agree** (one song if that's all you have by the artist) and **no song points to a different artist**.
 
@@ -51,4 +51,5 @@ To fix a single artist by hand afterwards, edit their row in `state/artists.csv`
 
 ## Changelog
 
+- **18 November 2026 (later):** name check for solo songs. The first report matched 5 artists to the wrong Deezer artist because a single solo song pointed to a completely different name (for example Countdown Studio Band to Sugar Minott, Various Artists to Diverse Artister).
 - **18 November 2026:** built. Solo songs first and an exact-name rule for songs with other artists, as Linn asked.
