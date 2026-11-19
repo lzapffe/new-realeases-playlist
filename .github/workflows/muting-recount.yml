@@ -1,0 +1,70 @@
+# =============================================================================
+# GitHub Actions workflow: recount the mute strikes for weeks 41 and 42.
+# ONE-TIME: delete this file together with muting/recount_strikes.R once the
+# recount has been saved.
+# Runs muting/recount_strikes.R when you start it by hand, and saves the
+# report (muting/recount_report.csv) and, if you tick "save", the new counts
+# in state/artists.csv and state/muted_artists.csv.
+# Goes in .github/workflows/muting-recount.yml in the new-releases repository.
+# Uses NO Spotify or Deezer requests.
+# =============================================================================
+
+name: "Muting: recount strikes (one-time)"
+
+# Only started by hand, with the "Run workflow" button.
+on:
+  workflow_dispatch:
+    inputs:
+      save_recount:
+        description: "Save the new counts in state/ (leave unticked for a report only)"
+        type: boolean
+        default: false
+
+# "contents: write" lets the last step commit the results.
+permissions:
+  contents: write
+
+# Shares its queue with the daily new-releases workflow, because both change
+# state/artists.csv. They never run at the same time.
+concurrency:
+  group: spotify-new-releases
+  cancel-in-progress: false
+
+jobs:
+  recount:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Copy the repository WITH its full history (fetch-depth: 0), because
+      # the old week lists are only in earlier commits.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Install R and the R packages (cached for later runs).
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::dplyr
+            any::purrr
+            any::tibble
+
+      - name: Recount mute strikes
+        env:
+          SAVE_RECOUNT: ${{ inputs.save_recount }}
+        run: Rscript muting/recount_strikes.R
+
+      # Save the report, and the state files if the recount was saved.
+      - name: Save results
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898183+github-actions[bot]@users.noreply.github.com"
+          [ -f muting/recount_report.csv ] && git add muting/recount_report.csv
+          git add state/artists.csv state/muted_artists.csv
+          git diff --cached --quiet || git commit -m "Muting: recount strikes"
+          git pull --rebase
+          git push

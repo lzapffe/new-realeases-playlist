@@ -26,10 +26,12 @@
 # Muting artists you never save (checked every day, after step 1):
 #   - When you delete a finished weekly playlist, the script notices it is gone
 #     from your library and judges that week from its own record
-#     (state/week_songs.csv): for each release, was at least one of its songs
-#     saved to a source playlist? Saved = your artists on it get their miss
-#     count reset to 0; not saved = +1 miss each.
-#   - After MUTE_AFTER_MISSES misses in a row, the artist is muted: it is no
+#     (state/week_songs.csv), once per artist for the whole week: if you
+#     saved at least one song from that week with the artist on it (main or
+#     featured), their strikes go back to 0; if you saved none and they are
+#     the main (first) artist on at least one song, +1 strike; if they are
+#     only featured and nothing was saved, no change.
+#   - After MUTE_AFTER_MISSES strikes in a row, the artist is muted: it is no
 #     longer checked for new releases (steps 3 and 6). Muted artists are
 #     listed in state/muted_artists.csv.
 #   - A muted artist is unmuted when more of their songs appear in your source
@@ -69,7 +71,8 @@ SOURCE_PLAYLISTS <- c("Everything everything - Part 1", "Everything everything -
 CHECK_PLAYLISTS <- SOURCE_PLAYLISTS
 
 # Muting: an artist is no longer checked for new releases after this many
-# releases in a row that you didn't save (see "Muting artists" further down).
+# weekly playlists in a row with a strike, i.e. where they were a main artist
+# and you saved none of their songs (see "Muting artists" further down).
 MUTE_AFTER_MISSES <- 5
 
 # What counts as a new release.
@@ -997,16 +1000,20 @@ source_song_counts <- function(src) {
 
 # judge_deleted_weeks(): judge every finished weekly playlist that is no
 # longer in your library (deleted = unfollowed in Spotify) and hasn't been
-# judged yet. Weeks are judged oldest first, and within a week releases are
-# taken in release-date order, so "in a row" follows time. For each release:
-#   1. saved = at least one of its songs is in your source playlists (same
-#      Spotify song, or exactly the same title and artists - e.g. you saved
-#      the album version of a single),
-#   2. "your artists" on it = its artists that appear in your source playlists
-#      (so on a collaboration, each of them is judged),
-#   3. saved: their misses are reset to 0; not saved: +1 each. When an artist
-#      reaches MUTE_AFTER_MISSES, they are muted, and the number of their songs
-#      in your source playlists is noted for the unmute check.
+# judged yet. Weeks are judged oldest first, so "in a row" follows time.
+# Each week counts ONCE per artist, however many songs they had in it:
+#   1. a song is saved if it is in your source playlists (same Spotify song,
+#      or exactly the same title and artists - e.g. you saved the album
+#      version of a single),
+#   2. "your artists" = artists that appear in your source playlists; the
+#      first artist on a song is its main artist, the others are featured,
+#   3. for each of your artists on the week: any song with them saved (main
+#      or featured) -> strikes back to 0; nothing saved and main artist on at
+#      least one song -> +1 strike; only featured and nothing saved -> no
+#      change. When an artist reaches MUTE_AFTER_MISSES, they are muted, and
+#      the number of their songs in your source playlists is noted for the
+#      unmute check.
+# (The strikes are kept in the "misses" column of state/artists.csv.)
 # Artists that are already muted are left as they are. Afterwards the week's
 # record is removed from week_songs.csv and the judging date is noted in
 # published.csv. Weeks from before this feature have no record and are only
@@ -1028,39 +1035,43 @@ judge_deleted_weeks <- function(src, art) {
     wk    <- gone$week[w]
     songs <- WEEK_SONGS |> filter(week == wk)
 
-    # One row per release: was any of its songs saved, and which of your
-    # artists are on it.
+    # For each song: who is on it (first ID = main artist) and was it saved.
     songs$ids   <- song_artist_ids(songs$artist_ids, songs$artists, art$spotify_id, art$name)
     songs$saved <- songs$uri %in% saved_uris | dup_key(songs$title, songs$artists) %in% saved_keys
-    rel <- songs |>
-      group_by(release_id) |>
-      summarise(release_date = first(release_date),
-                saved        = any(saved),
-                ids          = list(intersect(unique(unlist(ids)), art$spotify_id)),
-                .groups = "drop") |>
-      arrange(release_date)
 
-    # Update the miss counts, release by release.
-    n_muted <- 0
-    for (r in seq_len(nrow(rel))) {
-      for (sid in rel$ids[[r]]) {
-        i <- which(ARTISTS$spotify_id == sid)[1]
-        if (is.na(i) || !is.na(ARTISTS$muted_on[i])) next
-        misses <- if (rel$saved[r]) 0L else (suppressWarnings(as.integer(ARTISTS$misses[i])) %|na|% 0L) + 1L
-        ARTISTS$misses[i]      <<- as.character(misses)
-        ARTISTS$last_judged[i] <<- as.character(TODAY)
-        if (misses >= MUTE_AFTER_MISSES) {
-          ARTISTS$muted_on[i]      <<- as.character(TODAY)
-          ARTISTS$songs_at_mute[i] <<- as.character(counts[sid] %|na|% 0L)
-          n_muted <- n_muted + 1
-          message("  muted: ", ARTISTS$name[i], " (", misses, " releases in a row not saved)")
-        }
+    # One row per song and artist (only your artists), then one row per
+    # artist for the whole week: any of their songs saved, and main artist
+    # on any song.
+    per_artist <- tibble(spotify_id = as.character(unlist(songs$ids)),
+                         is_main    = as.logical(unlist(map(songs$ids, function(x) seq_along(x) == 1))),
+                         saved      = rep(songs$saved, lengths(songs$ids))) |>
+      filter(spotify_id %in% art$spotify_id) |>
+      group_by(spotify_id) |>
+      summarise(saved = any(saved), main = any(is_main), .groups = "drop")
+
+    # Update the strikes: saved -> 0, main and not saved -> +1, only featured
+    # and not saved -> left as it is. Already muted artists are skipped.
+    n_muted <- 0; n_strike <- 0; n_reset <- 0
+    for (a in seq_len(nrow(per_artist))) {
+      sid <- per_artist$spotify_id[a]
+      i <- which(ARTISTS$spotify_id == sid)[1]
+      if (is.na(i) || !is.na(ARTISTS$muted_on[i])) next
+      if (!per_artist$saved[a] && !per_artist$main[a]) next
+      misses <- if (per_artist$saved[a]) 0L else (suppressWarnings(as.integer(ARTISTS$misses[i])) %|na|% 0L) + 1L
+      if (per_artist$saved[a]) n_reset <- n_reset + 1 else n_strike <- n_strike + 1
+      ARTISTS$misses[i]      <<- as.character(misses)
+      ARTISTS$last_judged[i] <<- as.character(TODAY)
+      if (misses >= MUTE_AFTER_MISSES) {
+        ARTISTS$muted_on[i]      <<- as.character(TODAY)
+        ARTISTS$songs_at_mute[i] <<- as.character(counts[sid] %|na|% 0L)
+        n_muted <- n_muted + 1
+        message("  muted: ", ARTISTS$name[i], " (", misses, " weekly playlists in a row with nothing saved)")
       }
     }
 
     # Log the result, forget the week's record and mark the week as judged.
-    message(sprintf("Judged '%s': %d release(s), %d saved, %d not saved; %d artist(s) muted.",
-                    wk, nrow(rel), sum(rel$saved), sum(!rel$saved), n_muted))
+    message(sprintf("Judged '%s': %d song(s), %d saved; %d artist(s) back to 0, %d got a strike, %d muted.",
+                    wk, nrow(songs), sum(songs$saved), n_reset, n_strike, n_muted))
     WEEK_SONGS <<- WEEK_SONGS |> filter(week != wk)
     PUBLISHED$judged_on[PUBLISHED$week == wk] <<- as.character(TODAY)
   }
