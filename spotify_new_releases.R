@@ -28,9 +28,7 @@
 #     from your library and judges that week from its own record
 #     (state/week_songs.csv), once per artist for the whole week: if you
 #     saved at least one song from that week with the artist on it (main or
-#     featured), their strikes go back to 0; if you saved none and they are
-#     the main (first) artist on at least one song, +1 strike; if they are
-#     only featured and nothing was saved, no change.
+#     featured), their strikes go back to 0; if you saved none, +1 strike.
 #   - After MUTE_AFTER_MISSES strikes in a row, the artist is muted: it is no
 #     longer checked for new releases (steps 3 and 6). Muted artists are
 #     listed in state/muted_artists.csv.
@@ -71,8 +69,8 @@ SOURCE_PLAYLISTS <- c("Everything everything - Part 1", "Everything everything -
 CHECK_PLAYLISTS <- SOURCE_PLAYLISTS
 
 # Muting: an artist is no longer checked for new releases after this many
-# weekly playlists in a row with a strike, i.e. where they were a main artist
-# and you saved none of their songs (see "Muting artists" further down).
+# weekly playlists in a row with a strike, i.e. where you saved none of the
+# songs they were on (see "Muting artists" further down).
 MUTE_AFTER_MISSES <- 5
 
 # What counts as a new release.
@@ -1005,12 +1003,11 @@ source_song_counts <- function(src) {
 #   1. a song is saved if it is in your source playlists (same Spotify song,
 #      or exactly the same title and artists - e.g. you saved the album
 #      version of a single),
-#   2. "your artists" = artists that appear in your source playlists; the
-#      first artist on a song is its main artist, the others are featured,
-#   3. for each of your artists on the week: any song with them saved (main
-#      or featured) -> strikes back to 0; nothing saved and main artist on at
-#      least one song -> +1 strike; only featured and nothing saved -> no
-#      change. When an artist reaches MUTE_AFTER_MISSES, they are muted, and
+#   2. "your artists" = artists that appear in your source playlists, as
+#      main or featured artist on a song,
+#   3. for each of your artists on the week: any song with them saved ->
+#      strikes back to 0; nothing saved -> +1 strike. When an artist
+#      reaches MUTE_AFTER_MISSES, they are muted, and
 #      the number of their songs in your source playlists is noted for the
 #      unmute check.
 # (The strikes are kept in the "misses" column of state/artists.csv.)
@@ -1035,28 +1032,25 @@ judge_deleted_weeks <- function(src, art) {
     wk    <- gone$week[w]
     songs <- WEEK_SONGS |> filter(week == wk)
 
-    # For each song: who is on it (first ID = main artist) and was it saved.
+    # For each song: who is on it and was it saved.
     songs$ids   <- song_artist_ids(songs$artist_ids, songs$artists, art$spotify_id, art$name)
     songs$saved <- songs$uri %in% saved_uris | dup_key(songs$title, songs$artists) %in% saved_keys
 
     # One row per song and artist (only your artists), then one row per
-    # artist for the whole week: any of their songs saved, and main artist
-    # on any song.
+    # artist for the whole week: was any song with them saved?
     per_artist <- tibble(spotify_id = as.character(unlist(songs$ids)),
-                         is_main    = as.logical(unlist(map(songs$ids, function(x) seq_along(x) == 1))),
                          saved      = rep(songs$saved, lengths(songs$ids))) |>
       filter(spotify_id %in% art$spotify_id) |>
       group_by(spotify_id) |>
-      summarise(saved = any(saved), main = any(is_main), .groups = "drop")
+      summarise(saved = any(saved), .groups = "drop")
 
-    # Update the strikes: saved -> 0, main and not saved -> +1, only featured
-    # and not saved -> left as it is. Already muted artists are skipped.
+    # Update the strikes: saved -> 0, not saved -> +1. Already muted artists
+    # are skipped.
     n_muted <- 0; n_strike <- 0; n_reset <- 0
     for (a in seq_len(nrow(per_artist))) {
       sid <- per_artist$spotify_id[a]
       i <- which(ARTISTS$spotify_id == sid)[1]
       if (is.na(i) || !is.na(ARTISTS$muted_on[i])) next
-      if (!per_artist$saved[a] && !per_artist$main[a]) next
       misses <- if (per_artist$saved[a]) 0L else (suppressWarnings(as.integer(ARTISTS$misses[i])) %|na|% 0L) + 1L
       if (per_artist$saved[a]) n_reset <- n_reset + 1 else n_strike <- n_strike + 1
       ARTISTS$misses[i]      <<- as.character(misses)

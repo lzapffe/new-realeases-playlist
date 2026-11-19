@@ -10,9 +10,8 @@
 # source playlists ("your artists"):
 #   - you saved at least one song from that week with the artist on it
 #     (as main or featured artist): strikes go back to 0,
-#   - you saved none, and the artist is the MAIN (first) artist on at least
-#     one song that week: +1 strike,
-#   - the artist is only featured that week and nothing was saved: no change.
+#   - you saved none of the songs with the artist on it (main or featured):
+#     +1 strike, however many songs they had that week.
 # 5 strikes in a row = muted (MUTE_AFTER_MISSES in spotify_new_releases.R).
 #
 # Where the data comes from:
@@ -150,33 +149,29 @@ for (w in seq_len(nrow(WEEK_SOURCES))) {
   songs <- old_week_songs(WEEK_SOURCES$commit[w], wk)
   if (nrow(songs) == 0) stop("No songs found for '", wk, "' in its commit.")
 
-  # Was each song saved, and who is on it (first ID = main artist)?
+  # Was each song saved, and who is on it?
   songs$saved <- songs$uri %in% saved_uris | dup_key(songs$title, songs$artists) %in% saved_keys
   ids <- strsplit(ifelse(is.na(songs$artist_ids), "", songs$artist_ids), "|", fixed = TRUE)
 
   # One row per song and artist, only your artists, then one row per artist:
-  # any song saved, and main artist on any song.
+  # was any song with them saved?
   per_artist <- tibble(spotify_id = as.character(unlist(ids)),
-                       is_main    = as.logical(unlist(map(ids, function(x) seq_along(x) == 1))),
                        saved      = rep(songs$saved, lengths(ids))) |>
     filter(spotify_id %in% my_ids) |>
     group_by(spotify_id) |>
-    summarise(saved = any(saved), main = any(is_main), .groups = "drop")
+    summarise(saved = any(saved), .groups = "drop")
 
-  # Apply the rule: saved -> 0, main and not saved -> +1, featured only and
-  # not saved -> unchanged.
+  # Apply the rule: saved -> 0, not saved -> +1.
   before <- strikes[per_artist$spotify_id]
   before[is.na(before)] <- 0
-  after  <- ifelse(per_artist$saved, 0, ifelse(per_artist$main, before + 1, before))
+  after  <- ifelse(per_artist$saved, 0, before + 1)
   strikes[per_artist$spotify_id] <- after
 
   results[[wk]] <- tibble(spotify_id = per_artist$spotify_id,
-                          result = ifelse(per_artist$saved, "saved",
-                                   ifelse(per_artist$main, "strike", "featured only")))
-  message(sprintf("%s: %d songs, %d saved; %d artist(s) saved, %d strike(s), %d featured only.",
+                          result = ifelse(per_artist$saved, "saved", "strike"))
+  message(sprintf("%s: %d songs, %d saved; %d artist(s) saved, %d strike(s).",
                   wk, nrow(songs), sum(songs$saved), sum(per_artist$saved),
-                  sum(!per_artist$saved & per_artist$main),
-                  sum(!per_artist$saved & !per_artist$main)))
+                  sum(!per_artist$saved)))
 }
 
 # ---- 4. Compare with the current counts and build the report ----------------
