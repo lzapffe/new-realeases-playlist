@@ -87,6 +87,13 @@ CATCH_UP_DAYS          <- c(6, 7)   # Sat/Sun: finish it then if Friday's run fa
 # 17 Nov 2026 (Linn). To pause it again, use: FALLBACK_DAYS <- integer(0)
 FALLBACK_DAYS          <- c(6, 7, 1, 2, 3) # Sat-Wed: check unmatched artists on Spotify
 FALLBACK_INTERVAL_DAYS <- 7         # check each unmatched artist at most once a week
+# Extra pause (seconds) before each unmatched artist in step 6, on top of
+# SPOTIFY_PACE. Added 25 Nov 2026 as a TEST: the Spotify blocks on 18 and
+# 25 Nov both came during step 6 after ~145-150 requests, so the guess is
+# that Spotify reacts to many quick requests in a row. If step 6 runs
+# without blocks for a few weeks, the guess was probably right. Set to 0 to
+# turn the pause off again. Costs about 5 s x 50 artists = 4 minutes a run.
+FALLBACK_PACE          <- 5
 
 PLAYLIST_PUBLIC <- FALSE           # the weekly playlist is private
 TIMEZONE        <- "Europe/Oslo"   # used for "today", the weekday and the week number
@@ -1521,6 +1528,7 @@ tryCatch({
       for (k in seq_len(nrow(fb))) {
         if (budget_left() <= SPOTIFY_RESERVE + 4) break
         check_time()
+        Sys.sleep(FALLBACK_PACE)   # slow down step 6 (see FALLBACK_PACE)
         sid <- fb$spotify_id[k]
         for (grp in c("single", "album")) {
           pg <- page_of(sp_first(sprintf("/artists/%s/albums", sid),
